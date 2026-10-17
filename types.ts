@@ -17,12 +17,28 @@ export interface Bet {
   id: string;
   numbers: number[];
   createdAt: number;
-  type: 'manual' | 'random' | 'ai';
+  type: 'manual' | 'random' | 'ai' | 'smart_rules';
   reasoning?: string;
   groundingUrls?: Array<{ uri: string; title: string }>;
   analysis?: AnalysisResult;
   sum: number;
   sumStatus: 'low' | 'ideal' | 'high';
+}
+
+export interface GeneratorLogic {
+  repeat1to2: boolean;
+  balanceEvenOdd: boolean;
+  sum160to240: boolean;
+  spreadDistribution: boolean;
+  concentrate20to50: boolean;
+  max2Consecutive: boolean;
+  max2IdenticalEndings: boolean;
+}
+
+export interface ContestDraw {
+  contestNumber: number;
+  date: string;
+  numbers: number[];
 }
 
 export interface AIRootResponse {
