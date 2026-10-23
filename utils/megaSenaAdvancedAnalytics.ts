@@ -123,8 +123,9 @@ export interface PositionStats {
 /**
  * Calcula todas as análises avançadas com base nos sorteios oficiais
  */
-export const computeAllMegaSenaAnalytics = () => {
-  const latestContest = RECENT_OFFICIAL_DRAWS[0].contest;
+export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
+  const drawsList = customDraws && customDraws.length > 0 ? customDraws : RECENT_OFFICIAL_DRAWS;
+  const latestContest = drawsList[0]?.contest || RECENT_OFFICIAL_DRAWS[0].contest;
 
   // Mapa de atrasos atuais
   const currentDelays: Record<number, number> = {};
@@ -143,7 +144,7 @@ export const computeAllMegaSenaAnalytics = () => {
     countLast50[n] = 0;
   }
 
-  RECENT_OFFICIAL_DRAWS.forEach((draw, index) => {
+  drawsList.forEach((draw, index) => {
     draw.numbers.forEach(num => {
       if (currentDelays[num] === 999) {
         currentDelays[num] = latestContest - draw.contest;
@@ -245,9 +246,9 @@ export const computeAllMegaSenaAnalytics = () => {
   // 3. Ciclo das Dezenas (Últimos concursos até fechar todas as 60)
   const cycleDrawnSet = new Set<number>();
   let cycleDrawsCount = 0;
-  for (let i = 0; i < RECENT_OFFICIAL_DRAWS.length; i++) {
+  for (let i = 0; i < drawsList.length; i++) {
     cycleDrawsCount++;
-    RECENT_OFFICIAL_DRAWS[i].numbers.forEach(n => cycleDrawnSet.add(n));
+    drawsList[i].numbers.forEach(n => cycleDrawnSet.add(n));
     if (cycleDrawnSet.size >= 55) break; // Ciclo atual em andamento
   }
   const drawnNumbers = Array.from(cycleDrawnSet).sort((a, b) => a - b);
@@ -416,7 +417,7 @@ export const computeAllMegaSenaAnalytics = () => {
   ];
 
   // 17. Tabela Binária (Últimos 15 concursos para matriz 0/1)
-  const binaryTableRecent = RECENT_OFFICIAL_DRAWS.slice(0, 15).map(draw => {
+  const binaryTableRecent = drawsList.slice(0, 15).map(draw => {
     const bitmask: boolean[] = Array.from({ length: 60 }, (_, i) => draw.numbers.includes(i + 1));
     return {
       contest: draw.contest,
@@ -475,6 +476,25 @@ export const computeAllMegaSenaAnalytics = () => {
     bernoulliTable,
     classicPatterns
   };
+};
+
+/**
+ * Constrói uma lista de concursos atualizada integrando o último resultado oficial
+ */
+export const buildDrawsListWithLatest = (latest?: { contestNumber: number; date: string; numbers: number[] }): MegaDraw[] => {
+  if (!latest || !latest.numbers || latest.numbers.length !== 6) return RECENT_OFFICIAL_DRAWS;
+  const sortedNumbers = [...latest.numbers].sort((a, b) => a - b);
+  
+  if (RECENT_OFFICIAL_DRAWS.length > 0 && RECENT_OFFICIAL_DRAWS[0].contest === latest.contestNumber) {
+    return [
+      { contest: latest.contestNumber, date: latest.date, numbers: sortedNumbers },
+      ...RECENT_OFFICIAL_DRAWS.slice(1)
+    ];
+  }
+  return [
+    { contest: latest.contestNumber, date: latest.date, numbers: sortedNumbers },
+    ...RECENT_OFFICIAL_DRAWS.filter(d => d.contest !== latest.contestNumber)
+  ];
 };
 
 // Singleton em memória para acesso imediato e de alta performance

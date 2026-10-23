@@ -25,15 +25,27 @@ import {
 } from 'lucide-react';
 import { 
   computeAllMegaSenaAnalytics, 
+  buildDrawsListWithLatest,
   NumberDetailedAnalysis,
   PRIME_NUMBERS,
   FIBONACCI_NUMBERS,
   MULTIPLES_OF_THREE
 } from '../utils/megaSenaAdvancedAnalytics';
 import { TOTAL_CONTESTS_COUNT } from '../utils/megaSenaContestsData';
+import { OfficialDrawResult } from '../types';
 
-export const AdvancedAnalyticsView: React.FC = () => {
-  const analytics = useMemo(() => computeAllMegaSenaAnalytics(), []);
+interface AdvancedAnalyticsViewProps {
+  latestDraw?: OfficialDrawResult;
+}
+
+export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({ latestDraw }) => {
+  const dynamicDraws = useMemo(() => {
+    return buildDrawsListWithLatest(latestDraw);
+  }, [latestDraw]);
+
+  const analytics = useMemo(() => {
+    return computeAllMegaSenaAnalytics(dynamicDraws);
+  }, [dynamicDraws]);
   
   // Sub-abas de navegação temática
   const [subTab, setSubTab] = useState<
@@ -77,10 +89,16 @@ export const AdvancedAnalyticsView: React.FC = () => {
       <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white rounded-3xl p-5 sm:p-7 shadow-md relative overflow-hidden border border-emerald-800">
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-widest border border-emerald-400/30">
-                Oficial CEF • Concursos 1 a {TOTAL_CONTESTS_COUNT}
+                Oficial CEF • Base Concursos 1 a {latestDraw?.contestNumber || TOTAL_CONTESTS_COUNT}
               </span>
+              {latestDraw && (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 text-[10px] font-bold border border-amber-300/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  Último Sorteio Integrado: {latestDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' - ')}
+                </span>
+              )}
               <span className="text-xs text-emerald-200">Desde Março/1996</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1.5 tracking-tight">

@@ -38,7 +38,7 @@ import {
   Globe
 } from 'lucide-react';
 import { generateLuckyNumbersWithAI, analyzeBetHistory, generateBatchLuckyNumbersWithAI } from './services/geminiService';
-import { Bet, GeneratorLogic, CalculationStrategy } from './types';
+import { Bet, GeneratorLogic, CalculationStrategy, OfficialDrawResult } from './types';
 import { 
   validateGameAgainstRules, 
   generateGameWithRules, 
@@ -49,6 +49,13 @@ import NumberBall from './components/NumberBall';
 import BetCard from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
 import AdvancedAnalyticsView from './components/AdvancedAnalyticsView';
+import LatestOfficialDrawCard from './components/LatestOfficialDrawCard';
+import ProbabilitySimulatorView from './components/ProbabilitySimulatorView';
+import { 
+  getStoredLatestOfficialDraw, 
+  saveStoredLatestOfficialDraw, 
+  fetchLatestOfficialDraw 
+} from './services/lotteryApi';
 import { jsPDF } from 'jspdf';
 import { testConnection } from './firebase';
 import { 
@@ -64,9 +71,12 @@ import { User } from 'firebase/auth';
 
 const STORAGE_KEY = 'mega_sorte_bets';
 const LOGIC_KEY = 'mega_sorte_logic_v2';
-const DEFAULT_REFERENCE_DRAW = [5, 12, 26, 33, 44, 58]; // Concurso recente de referência
 
 const App: React.FC = () => {
+  // Último Sorteio Oficial da Mega-Sena (Sempre Visível e Integrado)
+  const [latestOfficialDraw, setLatestOfficialDraw] = useState<OfficialDrawResult>(() => getStoredLatestOfficialDraw());
+  const [isFetchingDraw, setIsFetchingDraw] = useState<boolean>(false);
+
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [betCount, setBetCount] = useState<number>(6);
   const [history, setHistory] = useState<Bet[]>([]);
@@ -74,7 +84,7 @@ const App: React.FC = () => {
   const [isBatchLoading, setIsBatchLoading] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState("");
-  const [activeTab, setActiveTab] = useState<'play' | 'analytics' | 'history' | 'checker'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'simulator' | 'analytics' | 'history' | 'checker'>('play');
   
   // Toast de feedback não intrusivo
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' | 'error' } | null>(null);
@@ -109,10 +119,10 @@ const App: React.FC = () => {
     };
   });
 
-  // Sorteio de referência para conferência e repetição
-  const [referenceDraw, setReferenceDraw] = useState<number[]>(DEFAULT_REFERENCE_DRAW);
+  // Sorteio de referência para conferência e repetição (padrão ancorado no último sorteio oficial)
+  const [referenceDraw, setReferenceDraw] = useState<number[]>(latestOfficialDraw.numbers);
   const [isCustomizingRef, setIsCustomizingRef] = useState(false);
-  const [tempRefInput, setTempRefInput] = useState(DEFAULT_REFERENCE_DRAW.join(', '));
+  const [tempRefInput, setTempRefInput] = useState(latestOfficialDraw.numbers.join(', '));
 
   // Filtros de histórico
   const [filterType, setFilterType] = useState<string>('all');
@@ -186,6 +196,48 @@ const App: React.FC = () => {
     return () => unsubscribeBets();
   }, [currentUser]);
 
+  // Sincronizar em segundo plano na inicialização para obter o último concurso oficial da Caixa
+  useEffect(() => {
+    fetchLatestOfficialDraw().then(({ draw, isLive, message }) => {
+      if (isLive) {
+        setLatestOfficialDraw(draw);
+        setReferenceDraw(draw.numbers);
+        setTempRefInput(draw.numbers.join(', '));
+        showToast(message, 'info');
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleRefreshLatestDraw = async () => {
+    setIsFetchingDraw(true);
+    try {
+      const { draw, isLive, message } = await fetchLatestOfficialDraw();
+      setLatestOfficialDraw(draw);
+      setReferenceDraw(draw.numbers);
+      setTempRefInput(draw.numbers.join(', '));
+      showToast(message, isLive ? 'success' : 'info');
+    } catch {
+      showToast("Não foi possível buscar na Caixa no momento. Usando último concurso salvo.", 'info');
+    } finally {
+      setIsFetchingDraw(false);
+    }
+  };
+
+  const handleUpdateLatestDraw = (updated: OfficialDrawResult) => {
+    setLatestOfficialDraw(updated);
+    saveStoredLatestOfficialDraw(updated);
+    setReferenceDraw(updated.numbers);
+    setTempRefInput(updated.numbers.join(', '));
+    showToast(`Concurso #${updated.contestNumber} salvo e ativo em todas as análises futuras!`, 'success');
+  };
+
+  const handleRestoreOfficialDrawInChecker = () => {
+    setReferenceDraw(latestOfficialDraw.numbers);
+    setTempRefInput(latestOfficialDraw.numbers.join(', '));
+    setIsCustomizingRef(false);
+    showToast(`Conferência restaurada para o Último Concurso Oficial Caixa #${latestOfficialDraw.contestNumber}!`, 'success');
+  };
+
   // Salvar histórico e regras em cache local
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
@@ -258,10 +310,10 @@ const App: React.FC = () => {
     return { sum, sumStatus };
   };
 
-  // Diagnóstico em tempo real da seleção atual na cartela
+  // Diagnóstico em tempo real da seleção atual na cartela integrando o último concurso
   const currentValidation = useMemo(() => {
-    return validateGameAgainstRules(selectedNumbers, logicOptions, referenceDraw);
-  }, [selectedNumbers, logicOptions, referenceDraw]);
+    return validateGameAgainstRules(selectedNumbers, logicOptions, latestOfficialDraw.numbers);
+  }, [selectedNumbers, logicOptions, latestOfficialDraw.numbers]);
 
   const toggleNumber = (num: number) => {
     if (selectedNumbers.includes(num)) {
@@ -354,18 +406,18 @@ const App: React.FC = () => {
     showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
   };
 
-  // Preencher cartela com as regras e análise avançada instantaneamente
+  // Preencher cartela com as regras e análise avançada integrando o último concurso
   const handleFillBoardWithRules = () => {
-    const result = generateGameWithRules(betCount, logicOptions, referenceDraw);
+    const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
     setSelectedNumbers(result.numbers);
     showToast(result.passedAllRules 
-      ? `Cartela preenchida com 100% das regras e Análise Avançada (Score: ${result.validation.advancedScore}%)!` 
-      : `Cartela preenchida com otimização analítica máxima (${result.validation.advancedScore}% conformidade)!`, 'success');
+      ? `Cartela preenchida integrando o Concurso #${latestOfficialDraw.contestNumber} (Score: ${result.validation.advancedScore}%)!` 
+      : `Cartela preenchida com otimização analítica (${result.validation.advancedScore}% conformidade)!`, 'success');
   };
 
-  // Gerador rápido pelas regras utilizando a Análise Avançada (salva direto no histórico)
+  // Gerador rápido pelas regras utilizando a Análise Avançada e o último concurso oficial
   const handleQuickRuleGenerate = () => {
-    const result = generateGameWithRules(betCount, logicOptions, referenceDraw);
+    const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
     saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
     setSelectedNumbers(result.numbers);
     const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
@@ -373,7 +425,7 @@ const App: React.FC = () => {
       logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
       logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
     const duqueNote = result.advancedMetrics?.duqueName ? ` • Duque ${result.advancedMetrics.duqueName}` : '';
-    showToast(`Jogo gerado via [${strategyName}] (${result.numbers.map(n => n.toString().padStart(2, '0')).join(' - ')})${duqueNote}!`, 'success');
+    showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
   };
 
   // Surpresinha clássica pura
@@ -389,44 +441,44 @@ const App: React.FC = () => {
     showToast("Surpresinha gerada e registrada no histórico!");
   };
 
-  // Gerador com IA
+  // Gerador com IA integrando obrigatoriamente o último sorteio oficial
   const generateAI = async () => {
     setIsLoading(true);
-    setLoadingStatus("Analisando Zona de Ouro e Estatísticas...");
+    setLoadingStatus(`Analisando Concurso Oficial #${latestOfficialDraw.contestNumber} e Estatísticas...`);
     try {
-      const result = await generateLuckyNumbersWithAI(betCount, logicOptions);
+      const result = await generateLuckyNumbersWithAI(betCount, logicOptions, latestOfficialDraw);
       setSelectedNumbers(result.numbers);
       saveBet('ai', result.numbers, result.reasoning, result.groundingUrls);
-      showToast("Jogo gerado com Inteligência Artificial e salvo!");
+      showToast(`Jogo gerado com Inteligência Artificial integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
     } catch (error) {
-      // Fallback local garantido via análise avançada
-      const fallback = generateGameWithRules(betCount, logicOptions, referenceDraw);
+      // Fallback local garantido via análise avançada com o último concurso
+      const fallback = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
       setSelectedNumbers(fallback.numbers);
       saveBet('smart_rules', fallback.numbers, fallback.reasoning, undefined, fallback.advancedMetrics);
-      showToast("Jogo gerado com sucesso via motor estatístico da Análise Avançada!");
+      showToast(`Jogo gerado com sucesso via motor estatístico integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
     } finally {
       setIsLoading(false);
       setLoadingStatus("");
     }
   };
 
-  // Gerar combo de 5 jogos com IA
+  // Gerar combo de 5 jogos com IA integrando o último concurso oficial
   const generateBatchAI = async () => {
     setIsBatchLoading(true);
     try {
-      const result = await generateBatchLuckyNumbersWithAI(logicOptions);
+      const result = await generateBatchLuckyNumbersWithAI(logicOptions, latestOfficialDraw);
       result.games.forEach(game => {
         saveBet('ai', game.numbers, game.reasoning, result.groundingUrls);
       });
-      showToast(`${result.games.length} jogos gerados e salvos no histórico!`);
+      showToast(`${result.games.length} jogos gerados integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
       setActiveTab('history');
     } catch (error) {
-      // Fallback local gerando 5 jogos com regras e análise avançada
+      // Fallback local gerando 5 jogos com regras e último concurso
       for (let i = 0; i < 5; i++) {
-        const game = generateGameWithRules(6, logicOptions, referenceDraw);
+        const game = generateGameWithRules(6, logicOptions, latestOfficialDraw.numbers);
         saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
       }
-      showToast("5 jogos gerados com sucesso via motor de regras e análise avançada!");
+      showToast(`5 jogos gerados com sucesso integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
       setActiveTab('history');
     } finally {
       setIsBatchLoading(false);
@@ -678,6 +730,17 @@ const App: React.FC = () => {
 
               <button 
                 type="button"
+                onClick={() => setActiveTab('simulator')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                  activeTab === 'simulator' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                }`}
+              >
+                <Calculator size={15} />
+                <span>SIMULADOR {history.length > 0 && `(${history.length})`}</span>
+              </button>
+
+              <button 
+                type="button"
                 onClick={() => setActiveTab('analytics')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
                   activeTab === 'analytics' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
@@ -775,6 +838,22 @@ const App: React.FC = () => {
 
       {/* Conteúdo Principal */}
       <main className="w-full max-w-6xl px-3 sm:px-6 py-6 flex-grow">
+        {/* Campo Permanente: Resultado do Último Sorteio Oficial Caixa Integrado */}
+        <div className="mb-6">
+          <LatestOfficialDrawCard
+            latestDraw={latestOfficialDraw}
+            onRefresh={handleRefreshLatestDraw}
+            onUpdateDraw={handleUpdateLatestDraw}
+            onSimulateProbability={() => setActiveTab('simulator')}
+            onCheckMyBets={() => {
+              setReferenceDraw(latestOfficialDraw.numbers);
+              setTempRefInput(latestOfficialDraw.numbers.join(', '));
+              setActiveTab('checker');
+            }}
+            isRefreshing={isFetchingDraw}
+          />
+        </div>
+
         {activeTab === 'play' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Lado Esquerdo: Cartela Interativa e Diagnóstico */}
@@ -1201,7 +1280,7 @@ const App: React.FC = () => {
                   <div>
                     <h3 className="text-lg font-black tracking-tight">Gerar na Zona de Ouro</h3>
                     <p className="text-emerald-100/80 text-xs leading-relaxed mt-1">
-                      A IA consulta os sorteios oficiais, analisa a densidade da <strong>Zona de Ouro (160–240)</strong> e gera apostas fundamentadas.
+                      A IA consulta todos os sorteios oficiais, analisa a densidade da <strong>Zona de Ouro (160–240)</strong> e integra obrigatoriamente o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> ({latestOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) em todas as combinações geradas.
                     </p>
                   </div>
 
@@ -1270,7 +1349,7 @@ const App: React.FC = () => {
                 </div>
 
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Gera matematicamente em milissegundos jogos combinando <strong>Duques Históricos</strong>, <strong>Moldura/Centro</strong>, <strong>Primos &amp; Fibonacci</strong>, <strong>Pareto 80/20</strong> e <strong>Ciclo Atual</strong> da Mega-Sena.
+                  Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> (repetição provável e atraso 0), <strong>Duques Históricos</strong>, <strong>Moldura/Centro</strong>, <strong>Primos &amp; Fibonacci</strong> e <strong>Ciclo Atual</strong> da Mega-Sena.
                 </p>
 
                 {/* Seletor de Estratégia de Cálculo Matemático */}
@@ -1665,9 +1744,22 @@ const App: React.FC = () => {
           </div>
         )}
 
+        {/* Aba do Simulador de Probabilidade Real (Quadra, Quina, Sena) */}
+        {activeTab === 'simulator' && (
+          <ProbabilitySimulatorView
+            savedBets={history}
+            latestDraw={latestOfficialDraw}
+            onAddBet={(numbers, type, reasoning) => {
+              saveBet(type, numbers, reasoning);
+              showToast("Aposta complementar adicionada à sua carteira com sucesso!");
+            }}
+            onGoToGenerator={() => setActiveTab('play')}
+          />
+        )}
+
         {/* Aba de Análise Estatística Avançada (20 Módulos Oficiais) */}
         {activeTab === 'analytics' && (
-          <AdvancedAnalyticsView />
+          <AdvancedAnalyticsView latestDraw={latestOfficialDraw} />
         )}
 
         {/* Aba 2: Histórico Permanente Completo */}
@@ -1688,6 +1780,16 @@ const App: React.FC = () => {
 
               {/* Ações de Backup & Exportação */}
               <div className="flex flex-wrap gap-2 items-center">
+                <button 
+                  type="button"
+                  onClick={() => setActiveTab('simulator')}
+                  disabled={history.length === 0}
+                  className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-3.5 py-2 rounded-xl text-xs font-black flex items-center space-x-1.5 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition-all shadow-sm"
+                  title="Simular a chance real de acerto (Quadra, Quina e Sena) para o próximo sorteio"
+                >
+                  <Calculator size={15} /> <span>SIMULAR PROBABILIDADES</span>
+                </button>
+
                 <button 
                   type="button"
                   onClick={downloadFullHistoryPDF}
@@ -1897,16 +1999,27 @@ const App: React.FC = () => {
                 <div className="flex items-center space-x-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                   <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-200">
-                    Sorteio de Referência
+                    Sorteio de Referência Caixa • Concurso #{latestOfficialDraw.contestNumber} ({latestOfficialDraw.date})
                   </span>
                 </div>
-                <button 
-                  type="button"
-                  onClick={() => setIsCustomizingRef(!isCustomizingRef)}
-                  className="text-[11px] font-bold text-emerald-200 hover:text-white underline"
-                >
-                  {isCustomizingRef ? 'Cancelar Edição' : 'Digitar Outro Concurso'}
-                </button>
+                <div className="flex items-center gap-3">
+                  {JSON.stringify(referenceDraw) !== JSON.stringify(latestOfficialDraw.numbers) && (
+                    <button
+                      type="button"
+                      onClick={handleRestoreOfficialDrawInChecker}
+                      className="text-[11px] font-bold text-amber-300 hover:text-white underline cursor-pointer"
+                    >
+                      Restaurar Concurso Oficial #{latestOfficialDraw.contestNumber}
+                    </button>
+                  )}
+                  <button 
+                    type="button"
+                    onClick={() => setIsCustomizingRef(!isCustomizingRef)}
+                    className="text-[11px] font-bold text-emerald-200 hover:text-white underline cursor-pointer"
+                  >
+                    {isCustomizingRef ? 'Cancelar Edição' : 'Digitar Outro Concurso'}
+                  </button>
+                </div>
               </div>
 
               {isCustomizingRef ? (

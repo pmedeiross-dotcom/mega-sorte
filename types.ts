@@ -81,6 +81,19 @@ export interface GeneratorLogic {
   calculationStrategy?: CalculationStrategy;
 }
 
+export interface OfficialDrawResult {
+  contestNumber: number;
+  date: string;
+  numbers: number[];
+  accumulated?: boolean;
+  nextContestDate?: string;
+  estimatedNextPrize?: string;
+  prizeSena?: string;
+  winnersSena?: number;
+  lastUpdated?: number;
+  source?: 'api' | 'official_archive' | 'manual';
+}
+
 export interface ContestDraw {
   contestNumber: number;
   date: string;

@@ -428,7 +428,7 @@ export const buildAdvancedBetMetrics = (validation: GameValidationDetails, strat
 export const generateGameWithRules = (
   quantity: number = 6,
   logic: GeneratorLogic,
-  referenceNumbers: number[] = [5, 12, 26, 33, 44, 58]
+  referenceNumbers: number[] = [5, 19, 22, 44, 47, 57]
 ): { 
   numbers: number[]; 
   reasoning: string; 

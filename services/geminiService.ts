@@ -1,10 +1,23 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { AIRootResponse, AnalysisResult, AIBatchResponse, GeneratorLogic } from "../types";
+import { AIRootResponse, AnalysisResult, AIBatchResponse, GeneratorLogic, OfficialDrawResult } from "../types";
 import { generateGameWithRules } from "../utils/lotteryRules";
 
 const getAIClient = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+};
+
+const buildDrawContext = (latestDraw?: OfficialDrawResult, logic?: GeneratorLogic): string => {
+  if (!latestDraw) return "";
+  const drawNumsStr = latestDraw.numbers.join(', ');
+  return `
+ÚLTIMO SORTEIO OFICIAL DA MEGA-SENA (Concurso #${latestDraw.contestNumber} de ${latestDraw.date}):
+Dezenas Oficiais Sorteadas: [${drawNumsStr}]
+DIRETRIZ DE INTEGRAÇÃO OBRIGATÓRIA DO ÚLTIMO SORTEIO OFICIAL:
+1. Repetição Histórica: Na história da Mega-Sena, cerca de 57% dos concursos repetem 1 ou 2 dezenas do concurso anterior. ${logic?.repeat1to2 ? `A REGRA DE REPETIÇÃO ESTÁ ATIVA: selecione obrigatoriamente 1 ou 2 dezenas sorteadas no Concurso #${latestDraw.contestNumber} ([${drawNumsStr}]).` : `Avalie se a repetição de 1 dezena dentre [${drawNumsStr}] fortalece a combinação.`}
+2. Dezenas Vizinhas e Adjacência: Analise a tendência de atração das dezenas vizinhas imediatas (números n-1 ou n+1 das sorteadas [${drawNumsStr}]).
+3. Atraso e Ciclo: As dezenas [${drawNumsStr}] estão no atraso 0 (recém-sorteadas), alterando os ciclos em aberto da cartela.
+`;
 };
 
 const buildLogicContext = (logic?: GeneratorLogic): string => {
@@ -31,19 +44,26 @@ const buildLogicContext = (logic?: GeneratorLogic): string => {
   return `\nREGRAS OBRIGATÓRIAS (Aplicar as seguintes lógicas selecionadas):\n${rules.join('\n')}\n`;
 };
 
-export const generateLuckyNumbersWithAI = async (quantity: number = 6, logic?: GeneratorLogic): Promise<AIRootResponse> => {
+export const generateLuckyNumbersWithAI = async (
+  quantity: number = 6, 
+  logic?: GeneratorLogic,
+  latestDraw?: OfficialDrawResult
+): Promise<AIRootResponse> => {
   const ai = getAIClient();
   const logicContext = buildLogicContext(logic);
+  const drawContext = buildDrawContext(latestDraw, logic);
   
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: `Acesse e analise a totalidade de todos os resultados da Mega Sena realizados até hoje (mais de 3.070 concursos oficiais da Caixa Econômica Federal desde março de 1996) e consulte as estatísticas em https://www.numeromania.com.br/sena.html.
+    ${drawContext}
     ${logicContext}
     Tarefa especial:
     1. Considere a distribuição histórica acumulada de todos os concursos: as dezenas mais sorteadas de todos os tempos (10, 53, 05, 37, 27, 33, 38, 17, 30, 42), as menos sorteadas (26, 55, 21, 22), a média histórica de soma (183) e a Zona de Ouro (160 a 240 onde ocorrem 78% dos sorteios).
-    2. Gere ${quantity} números únicos (1-60) respeitando TODAS as REGRAS OBRIGATÓRIAS listadas acima, se existirem.
-    3. Garantir que a soma caia na faixa estatisticamente mais provável ou na regra especificada.
-    4. No campo 'reasoning', explique brevemente as regras aplicadas e a lógica estatística com base nos concursos históricos.`,
+    2. Integre sempre o último resultado oficial nas análises para gerar esta combinação futura (análise de atraso, vizinhança e repetição do último concurso).
+    3. Gere ${quantity} números únicos (1-60) respeitando TODAS as REGRAS OBRIGATÓRIAS listadas acima, se existirem.
+    4. Garantir que a soma caia na faixa estatisticamente mais provável ou na regra especificada.
+    5. No campo 'reasoning', explique detalhadamente a estratégia estatística, explicitando como o último concurso oficial influenciou a escolha (ex: dezenas repetidas ou complementares).`,
     config: {
       tools: [{ googleSearch: {} }],
       responseMimeType: "application/json",
@@ -57,7 +77,7 @@ export const generateLuckyNumbersWithAI = async (quantity: number = 6, logic?: G
           },
           reasoning: {
             type: Type.STRING,
-            description: "Análise técnica citando o maior percentual dentro da faixa de soma 150-210."
+            description: "Análise técnica detalhada citando a soma, paridade e influência do último concurso oficial."
           }
         },
         required: ["numbers", "reasoning"]
@@ -80,37 +100,47 @@ export const generateLuckyNumbersWithAI = async (quantity: number = 6, logic?: G
     };
   } catch (error) {
     console.error("Erro no Gemini, aplicando motor de regras estatísticas local", error);
-    const generated = generateGameWithRules(quantity, logic || {
-      repeat1to2: false,
-      balanceEvenOdd: false,
-      sum160to240: false,
-      spreadDistribution: false,
-      concentrate20to50: false,
-      max2Consecutive: false,
-      max2IdenticalEndings: false
-    });
+    const generated = generateGameWithRules(
+      quantity, 
+      logic || {
+        repeat1to2: false,
+        balanceEvenOdd: false,
+        sum160to240: false,
+        spreadDistribution: false,
+        concentrate20to50: false,
+        max2Consecutive: false,
+        max2IdenticalEndings: false
+      },
+      latestDraw?.numbers
+    );
 
     return {
       numbers: generated.numbers,
-      reasoning: `${generated.reasoning} (Gerado com precisão matemática pelo motor estatístico).`,
+      reasoning: `${generated.reasoning} (Gerado com precisão matemática pelo motor estatístico integrando o Concurso #${latestDraw?.contestNumber || 3069}).`,
       groundingUrls: []
     };
   }
 };
 
-export const generateBatchLuckyNumbersWithAI = async (logic?: GeneratorLogic): Promise<AIBatchResponse> => {
+export const generateBatchLuckyNumbersWithAI = async (
+  logic?: GeneratorLogic,
+  latestDraw?: OfficialDrawResult
+): Promise<AIBatchResponse> => {
   const ai = getAIClient();
   const logicContext = buildLogicContext(logic);
+  const drawContext = buildDrawContext(latestDraw, logic);
   
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: `Acesse e analise o histórico oficial completo de todos os mais de 3.070 resultados da Mega Sena realizados até hoje na história das loterias da Caixa.
+    ${drawContext}
     ${logicContext}
     Instruções de Probabilidade e Estatística:
     1. Baseie-se na distribuição de todos os concursos da história: priorize a Zona de Ouro (somas entre 160 e 240, onde concentram-se 78% dos sorteios) e a frequência histórica das dezenas líderes.
-    2. Gere 5 jogos distintos de 6 dezenas aplicando estritamente as REGRAS OBRIGATÓRIAS selecionadas.
-    3. Diversifique as combinações mantendo alta densidade probabilística histórica.
-    4. Cada jogo deve ter um reasoning curto justificando sua inclusão baseada nas regras selecionadas e no histórico de concursos.`,
+    2. OBRIGATÓRIO: Integre as dezenas do último concurso oficial em todas as análises de cada uma das 5 combinações futuras (analisando repetições de 1 a 2 dezenas, dezenas vizinhas e ciclos).
+    3. Gere 5 jogos distintos de 6 dezenas aplicando estritamente as REGRAS OBRIGATÓRIAS selecionadas.
+    4. Diversifique as combinações mantendo alta densidade probabilística histórica.
+    5. Cada jogo deve ter um reasoning curto justificando sua inclusão baseada nas regras selecionadas e na influência do último concurso oficial.`,
     config: {
       tools: [{ googleSearch: {} }],
       responseMimeType: "application/json",
@@ -152,15 +182,19 @@ export const generateBatchLuckyNumbersWithAI = async (logic?: GeneratorLogic): P
   } catch (error) {
     console.error("Erro no Gemini Batch, gerando via motor local de regras", error);
     const games = Array.from({ length: 5 }, () => {
-      const generated = generateGameWithRules(6, logic || {
-        repeat1to2: false,
-        balanceEvenOdd: false,
-        sum160to240: false,
-        spreadDistribution: false,
-        concentrate20to50: false,
-        max2Consecutive: false,
-        max2IdenticalEndings: false
-      });
+      const generated = generateGameWithRules(
+        6, 
+        logic || {
+          repeat1to2: false,
+          balanceEvenOdd: false,
+          sum160to240: false,
+          spreadDistribution: false,
+          concentrate20to50: false,
+          max2Consecutive: false,
+          max2IdenticalEndings: false
+        },
+        latestDraw?.numbers
+      );
       return {
         numbers: generated.numbers,
         reasoning: generated.reasoning
