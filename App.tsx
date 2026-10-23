@@ -31,7 +31,11 @@ import {
   BarChart3,
   Flame,
   Target,
-  Grid3X3
+  Grid3X3,
+  Cloud,
+  LogOut,
+  LogIn,
+  Globe
 } from 'lucide-react';
 import { generateLuckyNumbersWithAI, analyzeBetHistory, generateBatchLuckyNumbersWithAI } from './services/geminiService';
 import { Bet, GeneratorLogic, CalculationStrategy } from './types';
@@ -46,6 +50,17 @@ import BetCard from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
 import AdvancedAnalyticsView from './components/AdvancedAnalyticsView';
 import { jsPDF } from 'jspdf';
+import { testConnection } from './firebase';
+import { 
+  loginWithGoogle, 
+  logoutUser, 
+  subscribeToAuth, 
+  saveBetToCloud, 
+  deleteBetFromCloud, 
+  subscribeToCloudBets, 
+  syncAllLocalBetsToCloud 
+} from './services/firebaseService';
+import { User } from 'firebase/auth';
 
 const STORAGE_KEY = 'mega_sorte_bets';
 const LOGIC_KEY = 'mega_sorte_logic_v2';
@@ -105,6 +120,11 @@ const App: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'sum_desc' | 'sum_asc'>('newest');
   const [onlyPrizes, setOnlyPrizes] = useState<boolean>(false);
 
+  // Estado de Autenticação e Nuvem Google Firebase
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'synced' | 'syncing' | 'error'>('idle');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Mostrar toast
@@ -113,7 +133,16 @@ const App: React.FC = () => {
     setTimeout(() => setToast(null), 3200);
   };
 
-  // Carregar histórico inicial
+  // Testar conexão inicial com Firestore (mandatório pelo SDK) e escutar Auth
+  useEffect(() => {
+    testConnection().catch(() => {});
+    const unsub = subscribeToAuth((user) => {
+      setCurrentUser(user);
+    });
+    return () => unsub();
+  }, []);
+
+  // Carregar histórico inicial do armazenamento local
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -125,7 +154,39 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Salvar histórico e regras
+  // Sincronizar em tempo real com a nuvem quando o usuário estiver autenticado
+  useEffect(() => {
+    if (!currentUser) {
+      setCloudSyncStatus('idle');
+      return;
+    }
+    setCloudSyncStatus('syncing');
+
+    const unsubscribeBets = subscribeToCloudBets(
+      currentUser.uid,
+      (cloudBets) => {
+        setHistory(prev => {
+          const map = new Map<string, Bet>();
+          // Mantém apostas locais existentes
+          prev.forEach(b => map.set(b.id, b));
+          // Atualiza e mescla apostas que vieram da nuvem
+          cloudBets.forEach(b => map.set(b.id, { ...b, isCloudSynced: true }));
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          return merged;
+        });
+        setCloudSyncStatus('synced');
+      },
+      (err) => {
+        console.warn("Erro ao sincronizar apostas na nuvem:", err);
+        setCloudSyncStatus('error');
+      }
+    );
+
+    return () => unsubscribeBets();
+  }, [currentUser]);
+
+  // Salvar histórico e regras em cache local
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
   }, [history]);
@@ -133,6 +194,58 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(LOGIC_KEY, JSON.stringify(logicOptions));
   }, [logicOptions]);
+
+  // Ações de Autenticação com Google
+  const handleGoogleLogin = async () => {
+    try {
+      setIsSyncingCloud(true);
+      const user = await loginWithGoogle();
+      showToast(`Conectado como ${user.displayName || user.email}! Sincronizando apostas...`, 'success');
+      // Subir apostas locais existentes para a nuvem para que nunca se percam
+      if (history.length > 0) {
+        const count = await syncAllLocalBetsToCloud(user.uid, history);
+        if (count > 0) {
+          showToast(`${count} aposta(s) sincronizada(s) para sua conta na nuvem!`);
+        }
+      }
+    } catch (error: any) {
+      if (error?.code !== 'auth/popup-closed-by-user') {
+        showToast("Não foi possível conectar com o Google no momento.", 'error');
+      }
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      setCurrentUser(null);
+      setCloudSyncStatus('idle');
+      showToast("Desconectado da conta Google. Apostas continuam salvas localmente neste navegador.");
+    } catch (error) {
+      showToast("Erro ao desconectar.", 'error');
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (!currentUser) {
+      handleGoogleLogin();
+      return;
+    }
+    setIsSyncingCloud(true);
+    setCloudSyncStatus('syncing');
+    try {
+      const count = await syncAllLocalBetsToCloud(currentUser.uid, history);
+      setCloudSyncStatus('synced');
+      showToast(`${count} aposta(s) sincronizada(s) com a nuvem do Google!`);
+    } catch (e) {
+      setCloudSyncStatus('error');
+      showToast("Erro ao sincronizar com a nuvem.", 'error');
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
 
   const calculateSumData = (nums: number[]) => {
     const sum = nums.reduce((a, b) => a + b, 0);
@@ -180,10 +293,42 @@ const App: React.FC = () => {
       groundingUrls,
       sum,
       sumStatus,
-      advancedMetrics: resolvedAdvancedMetrics
+      advancedMetrics: resolvedAdvancedMetrics,
+      userId: currentUser?.uid,
+      isCloudSynced: Boolean(currentUser)
     };
+
     setHistory(prev => [newBet, ...prev]);
+
+    // Se o usuário estiver autenticado, salva instantaneamente no Firestore
+    if (currentUser) {
+      saveBetToCloud(currentUser.uid, newBet).catch(err => {
+        console.warn("Erro ao salvar aposta no Firestore:", err);
+      });
+    }
+
     return newBet;
+  };
+
+  const handleDeleteBet = (id: string) => {
+    setHistory(h => h.filter(x => x.id !== id));
+    if (currentUser) {
+      deleteBetFromCloud(currentUser.uid, id).catch(err => {
+        console.warn("Erro ao excluir do Firestore:", err);
+      });
+    }
+    showToast("Aposta excluída do histórico.");
+  };
+
+  const handleClearHistory = async () => {
+    if (!confirm("Tem certeza que deseja apagar todas as apostas salvas?")) return;
+    if (currentUser) {
+      for (const b of history) {
+        deleteBetFromCloud(currentUser.uid, b.id).catch(() => {});
+      }
+    }
+    setHistory([]);
+    showToast("Histórico limpo com sucesso.");
   };
 
   const handleManualSave = () => {
@@ -517,52 +662,114 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Navegação entre Abas */}
-          <nav className="flex items-center bg-emerald-50/80 p-1 rounded-2xl border border-emerald-200/60 shadow-inner overflow-x-auto max-w-full">
-            <button 
-              type="button"
-              onClick={() => setActiveTab('play')} 
-              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                activeTab === 'play' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
-              }`}
-            >
-              <ListChecks size={15} />
-              <span>JOGAR</span>
-            </button>
+          {/* Navegação entre Abas e Cloud Widget */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <nav className="flex items-center bg-emerald-50/80 p-1 rounded-2xl border border-emerald-200/60 shadow-inner overflow-x-auto max-w-full">
+              <button 
+                type="button"
+                onClick={() => setActiveTab('play')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                  activeTab === 'play' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                }`}
+              >
+                <ListChecks size={15} />
+                <span>JOGAR</span>
+              </button>
 
-            <button 
-              type="button"
-              onClick={() => setActiveTab('analytics')} 
-              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                activeTab === 'analytics' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
-              }`}
-            >
-              <BarChart3 size={15} />
-              <span>ANÁLISE AVANÇADA</span>
-            </button>
+              <button 
+                type="button"
+                onClick={() => setActiveTab('analytics')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                  activeTab === 'analytics' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                }`}
+              >
+                <BarChart3 size={15} />
+                <span>ANÁLISE AVANÇADA</span>
+              </button>
 
-            <button 
-              type="button"
-              onClick={() => setActiveTab('checker')} 
-              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                activeTab === 'checker' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
-              }`}
-            >
-              <Award size={15} />
-              <span>CONFERIR</span>
-            </button>
+              <button 
+                type="button"
+                onClick={() => setActiveTab('checker')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                  activeTab === 'checker' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                }`}
+              >
+                <Award size={15} />
+                <span>CONFERIR</span>
+              </button>
 
-            <button 
-              type="button"
-              onClick={() => setActiveTab('history')} 
-              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                activeTab === 'history' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
-              }`}
-            >
-              <History size={15} />
-              <span>HISTÓRICO ({history.length})</span>
-            </button>
-          </nav>
+              <button 
+                type="button"
+                onClick={() => setActiveTab('history')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                  activeTab === 'history' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                }`}
+              >
+                <History size={15} />
+                <span>HISTÓRICO ({history.length})</span>
+              </button>
+            </nav>
+
+            {/* Widget de Nuvem & Autenticação Google */}
+            <div className="flex items-center">
+              {currentUser ? (
+                <div className="flex items-center space-x-2 bg-emerald-50/90 border border-emerald-200/90 px-2.5 py-1 rounded-2xl shadow-sm">
+                  {currentUser.photoURL ? (
+                    <img 
+                      src={currentUser.photoURL} 
+                      alt="" 
+                      className="w-7 h-7 rounded-full border border-emerald-300 object-cover" 
+                    />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-black">
+                      {currentUser.displayName ? currentUser.displayName[0].toUpperCase() : 'U'}
+                    </div>
+                  )}
+                  
+                  <div className="hidden xl:flex flex-col text-left pr-0.5">
+                    <span className="text-[11px] font-bold text-emerald-950 leading-tight truncate max-w-[110px]">
+                      {currentUser.displayName || currentUser.email}
+                    </span>
+                    <span className="text-[9px] text-emerald-700 flex items-center space-x-1 font-semibold">
+                      <Cloud size={10} className={cloudSyncStatus === 'syncing' ? 'text-amber-500 animate-pulse' : 'text-emerald-600'} />
+                      <span>{cloudSyncStatus === 'syncing' ? 'Sincronizando...' : 'Nuvem Conectada'}</span>
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSyncNow}
+                    disabled={isSyncingCloud}
+                    className="p-1.5 text-emerald-700 hover:text-emerald-950 hover:bg-emerald-200/50 rounded-xl transition-all"
+                    title="Sincronizar apostas na nuvem agora"
+                  >
+                    <RefreshCw size={13} className={isSyncingCloud ? 'animate-spin' : ''} />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                    title="Desconectar conta Google"
+                  >
+                    <LogOut size={13} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  disabled={isSyncingCloud}
+                  className="flex items-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-3 py-2 rounded-2xl text-xs font-black shadow-sm transition-all active:scale-[0.98]"
+                  title="Conectar com o Google para salvar suas apostas na nuvem e abrir em qualquer navegador"
+                >
+                  <Cloud size={14} />
+                  <span className="hidden sm:inline">Salvar na Nuvem</span>
+                  <span className="sm:hidden">Nuvem</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
@@ -1473,7 +1680,9 @@ const App: React.FC = () => {
                   <span>Seu Histórico de Jogos</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Armazenamento local permanente • {filteredHistory.length} de {history.length} apostas exibidas
+                  {currentUser 
+                    ? `Sincronização em nuvem Google ativa • ${filteredHistory.length} de ${history.length} apostas disponíveis`
+                    : `Armazenamento local • ${filteredHistory.length} de ${history.length} apostas exibidas`}
                 </p>
               </div>
 
@@ -1508,18 +1717,67 @@ const App: React.FC = () => {
 
                 <button 
                   type="button"
-                  onClick={() => { 
-                    if (confirm("Tem certeza que deseja apagar todo o seu histórico de jogos neste navegador?")) {
-                      setHistory([]);
-                      showToast("Histórico limpo.");
-                    }
-                  }} 
+                  onClick={handleClearHistory} 
                   disabled={history.length === 0}
                   className="text-red-500 hover:text-red-700 font-bold text-xs p-2 rounded-lg hover:bg-red-50 flex items-center space-x-1 disabled:opacity-30 transition-colors"
                   title="Limpar histórico"
                 >
                   <Trash2 size={16} />
                 </button>
+              </div>
+            </div>
+
+            {/* Banner de Sincronização em Nuvem Multi-Navegador */}
+            <div className={`rounded-2xl p-4 mb-6 border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+              currentUser 
+                ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200/90' 
+                : 'bg-gradient-to-r from-slate-50 to-emerald-50/40 border-slate-200'
+            }`}>
+              <div className="flex items-start space-x-3">
+                <div className={`p-2 rounded-xl mt-0.5 ${currentUser ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                  <Cloud size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs sm:text-sm font-black text-emerald-950 flex items-center space-x-1.5">
+                    <span>{currentUser ? 'Nuvem Conectada: Apostas Sincronizadas' : 'Acesse suas Apostas em Qualquer Navegador'}</span>
+                    {currentUser && <Check size={14} className="text-emerald-600" />}
+                  </h4>
+                  <p className="text-[11px] sm:text-xs text-slate-600 mt-0.5 max-w-xl">
+                    {currentUser ? (
+                      <>
+                        Suas apostas estão salvas na nuvem com a conta <strong>{currentUser.email}</strong>. Abra o Mega Sorte em qualquer outro navegador ou celular e suas apostas salvas aparecerão instantaneamente!
+                      </>
+                    ) : (
+                      <>
+                        Atualmente suas apostas estão salvas apenas neste navegador. Conecte com o Google para salvar na nuvem e abrir suas apostas salvas em qualquer computador, celular ou navegador!
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 self-end sm:self-center">
+                {currentUser ? (
+                  <button
+                    type="button"
+                    onClick={handleSyncNow}
+                    disabled={isSyncingCloud}
+                    className="bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 font-bold text-xs px-3.5 py-2 rounded-xl flex items-center space-x-1.5 shadow-sm transition-all"
+                  >
+                    <RefreshCw size={13} className={isSyncingCloud ? 'animate-spin' : ''} />
+                    <span>Sincronizar Agora</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={isSyncingCloud}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl flex items-center space-x-1.5 shadow-sm transition-all"
+                  >
+                    <Cloud size={13} />
+                    <span>Conectar Conta Google</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1610,10 +1868,7 @@ const App: React.FC = () => {
                     key={bet.id} 
                     bet={bet} 
                     drawnNumbers={referenceDraw}
-                    onDelete={(id) => {
-                      setHistory(h => h.filter(x => x.id !== id));
-                      showToast("Aposta excluída do histórico.");
-                    }} 
+                    onDelete={handleDeleteBet} 
                     onAnalyze={handleAnalyzeBet} 
                     isAnalyzing={analyzingId === bet.id} 
                   />

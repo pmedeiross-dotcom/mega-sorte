@@ -56,6 +56,8 @@ export interface Bet {
   sum: number;
   sumStatus: 'low' | 'ideal' | 'high';
   advancedMetrics?: AdvancedBetMetrics;
+  userId?: string;
+  isCloudSynced?: boolean;
 }
 
 export interface GeneratorLogic {

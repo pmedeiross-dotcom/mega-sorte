@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile in the application",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User UID matching auth.uid",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 128
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "User avatar photo URL",
+          "maxLength": 1024
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp or server timestamp string"
+        }
+      },
+      "required": ["id", "email"]
+    },
+    "Bet": {
+      "title": "Bet",
+      "description": "Saved lottery bet game with statistical metrics and numbers",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the bet",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID",
+          "maxLength": 128
+        },
+        "numbers": {
+          "type": "array",
+          "description": "Array of 6 to 15 chosen lottery numbers between 1 and 60"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds when bet was created"
+        },
+        "type": {
+          "type": "string",
+          "description": "How the game was generated",
+          "enum": ["manual", "random", "ai", "smart_rules"]
+        },
+        "reasoning": {
+          "type": "string",
+          "description": "Statistical rationale or AI explanation",
+          "maxLength": 3000
+        },
+        "sum": {
+          "type": "number",
+          "description": "Sum of all chosen numbers"
+        },
+        "sumStatus": {
+          "type": "string",
+          "description": "Status of the sum against normal distribution",
+          "enum": ["low", "ideal", "high"]
+        },
+        "advancedMetrics": {
+          "type": "object",
+          "description": "Detailed multi-objective mathematical and statistical metrics"
+        }
+      },
+      "required": ["id", "userId", "numbers", "createdAt", "type", "sum", "sumStatus"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profile and account synchronization info"
+    },
+    "/users/{userId}/bets/{betId}": {
+      "schema": "Bet",
+      "description": "Stores user saved lottery bets across all devices and browsers"
+    }
+  }
+}

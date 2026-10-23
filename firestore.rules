@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Profile Validation
+    function isValidUser(data, userId) {
+      return data.id == userId
+        && data.id == request.auth.uid
+        && data.email is string
+        && data.email.size() <= 256
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 128))
+        && data.keys().hasAll(['id', 'email'])
+        && data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'createdAt']);
+    }
+
+    // Bet Validation Helper
+    function isValidBet(data, userId) {
+      return data.id is string
+        && isValidId(data.id)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.numbers is list
+        && data.numbers.size() >= 6
+        && data.numbers.size() <= 15
+        && (data.numbers.size() > 0 && data.numbers[0] is int)
+        && (data.createdAt is int || data.createdAt is number)
+        && data.type in ['manual', 'random', 'ai', 'smart_rules']
+        && (data.sum is int || data.sum is number)
+        && data.sumStatus in ['low', 'ideal', 'high']
+        && (!('reasoning' in data) || (data.reasoning is string && data.reasoning.size() <= 3000))
+        && (!('advancedMetrics' in data) || data.advancedMetrics is map)
+        && (!('groundingUrls' in data) || (data.groundingUrls is list && data.groundingUrls.size() <= 20))
+        && (!('analysis' in data) || data.analysis is map)
+        && data.keys().hasAll(['id', 'userId', 'numbers', 'createdAt', 'type', 'sum', 'sumStatus'])
+        && data.keys().hasOnly(['id', 'userId', 'numbers', 'createdAt', 'type', 'reasoning', 'sum', 'sumStatus', 'advancedMetrics', 'groundingUrls', 'analysis']);
+    }
+
+    // User Profile Collection
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false; // No blanket listing of users
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId);
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId)
+                    && incoming().id == existing().id;
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // User Saved Bets Subcollection
+      match /bets/{betId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(betId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) 
+                      && isValidId(userId) 
+                      && isValidId(betId) 
+                      && incoming().id == betId 
+                      && isValidBet(incoming(), userId);
+        allow update: if isOwner(userId) 
+                      && isValidId(userId) 
+                      && isValidId(betId) 
+                      && isValidBet(incoming(), userId)
+                      && incoming().id == existing().id
+                      && incoming().userId == existing().userId
+                      && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(betId);
+      }
+    }
+  }
+}

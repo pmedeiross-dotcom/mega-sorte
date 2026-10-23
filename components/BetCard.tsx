@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Bet } from '../types';
 import NumberBall from './NumberBall';
-import { Trash2, Share2, Calendar, Activity, Calculator, FileDown, Copy, Check, Award } from 'lucide-react';
+import { Trash2, Share2, Calendar, Activity, Calculator, FileDown, Copy, Check, Award, Cloud } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 
 interface BetCardProps {
@@ -109,6 +109,15 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${typeBadge.color}`}>
             {typeBadge.label}
           </span>
+          {bet.isCloudSynced && (
+            <span 
+              className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-teal-50 text-teal-700 border border-teal-200"
+              title="Salvo na nuvem do Google Firestore. Acessível em qualquer navegador."
+            >
+              <Cloud size={10} />
+              <span>Nuvem</span>
+            </span>
+          )}
         </div>
 
         {/* Ações */}
