@@ -189,7 +189,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
       </div>
 
       {/* Métricas estatísticas da aposta */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold ${sumBadge.color}`}>
           <Calculator size={13} />
           <span>Soma: {bet.sum}</span>
@@ -204,6 +204,72 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
           {bet.numbers.length} dezenas
         </div>
       </div>
+
+      {/* Badges da Análise Avançada e Métricas Matemáticas */}
+      {bet.advancedMetrics && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-3 text-[10px]">
+          {bet.advancedMetrics.strategyUsed && (
+            <span className={`px-2 py-0.5 rounded-md font-black border ${
+              bet.advancedMetrics.strategyUsed === 'momentum' 
+                ? 'bg-orange-50 text-orange-900 border-orange-300' 
+                : bet.advancedMetrics.strategyUsed === 'cycle_delay'
+                ? 'bg-blue-50 text-blue-900 border-blue-300'
+                : bet.advancedMetrics.strategyUsed === 'cooccurrence'
+                ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
+                : bet.advancedMetrics.strategyUsed === 'entropy_shannon'
+                ? 'bg-purple-50 text-purple-900 border-purple-300'
+                : 'bg-emerald-50 text-emerald-900 border-emerald-300'
+            }`}>
+              {bet.advancedMetrics.strategyUsed === 'momentum' && '🔥 Momentum'}
+              {bet.advancedMetrics.strategyUsed === 'cycle_delay' && '⏳ Pressão/Ciclo'}
+              {bet.advancedMetrics.strategyUsed === 'cooccurrence' && '🔗 Alta Afinidade'}
+              {bet.advancedMetrics.strategyUsed === 'entropy_shannon' && '🎲 Shannon'}
+              {bet.advancedMetrics.strategyUsed === 'balanced' && '🎯 Padrão Ouro'}
+            </span>
+          )}
+          {bet.advancedMetrics.duqueName && (
+            <span className="bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded-md font-bold">
+              ✨ {bet.advancedMetrics.duqueName}
+            </span>
+          )}
+          {bet.advancedMetrics.shannonEntropy !== undefined && (
+            <span className="bg-violet-50 text-violet-800 border border-violet-200 px-2 py-0.5 rounded-md font-semibold">
+              H: {bet.advancedMetrics.shannonEntropy} bits ({bet.advancedMetrics.entropyLabel || 'Ideal'})
+            </span>
+          )}
+          {bet.advancedMetrics.hasHighPressureDezena && (
+            <span className="bg-rose-50 text-rose-800 border border-rose-200 px-2 py-0.5 rounded-md font-bold">
+              ⚡ Pressão Z &gt; 1.35
+            </span>
+          )}
+          <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-semibold">
+            Primos: {bet.advancedMetrics.primesCount}
+          </span>
+          <span className="bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded-md font-semibold">
+            Moldura: {bet.advancedMetrics.frameCount} / Centro: {bet.advancedMetrics.centerCount}
+          </span>
+          {bet.advancedMetrics.paretoCount > 0 && (
+            <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md font-semibold">
+              Pareto: {bet.advancedMetrics.paretoCount}
+            </span>
+          )}
+          {bet.advancedMetrics.cycleMissingCount > 0 && (
+            <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md font-semibold">
+              Ciclo: {bet.advancedMetrics.cycleMissingCount}
+            </span>
+          )}
+          {bet.advancedMetrics.chiSquareConformity !== undefined && (
+            <span className="bg-cyan-50 text-cyan-800 border border-cyan-200 px-2 py-0.5 rounded-md font-semibold">
+              χ²: {bet.advancedMetrics.chiSquareConformity}%
+            </span>
+          )}
+          {bet.advancedMetrics.advancedScore !== undefined && (
+            <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded-md font-bold ml-auto">
+              {bet.advancedMetrics.advancedScore}% Analítico
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Justificativa / Fundamento */}
       <div className="flex-grow">

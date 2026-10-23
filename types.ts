@@ -13,6 +13,38 @@ export interface AnalysisResult {
   };
 }
 
+export type CalculationStrategy = 
+  | 'balanced'       // Padrão Ouro Multi-Objetivo (Pareto + Poisson/Bernoulli + Moldura)
+  | 'momentum'       // Decaimento Exponencial & Momentum Recente (últimos 50-100 concursos)
+  | 'cycle_delay'    // Pressão Estatística (Z-Score de Atraso & Fechamento de Ciclo)
+  | 'cooccurrence'   // Coocorrência & Duques de Alta Afinidade (Lift Positivo)
+  | 'entropy_shannon'; // Máxima Entropia de Shannon & Dispersão Uniforme
+
+export interface AdvancedBetMetrics {
+  duquePair?: [number, number];
+  duqueName?: string;
+  primesCount: number;
+  fibonacciCount: number;
+  multiplesOfThreeCount: number;
+  frameCount: number;
+  centerCount: number;
+  paretoCount: number;
+  cycleMissingCount: number;
+  maxInRow: number;
+  maxInCol: number;
+  historicalHotCount: number;
+  advancedScore?: number;
+  // Sugestões e Métricas Matemáticas Avançadas
+  strategyUsed?: CalculationStrategy;
+  shannonEntropy?: number;
+  entropyLabel?: 'Baixa' | 'Ideal' | 'Alta';
+  delayZScoreMax?: number;
+  hasHighPressureDezena?: boolean;
+  cooccurrenceLiftAvg?: number;
+  chiSquareConformity?: number;
+  smartSuggestions?: string[];
+}
+
 export interface Bet {
   id: string;
   numbers: number[];
@@ -23,6 +55,7 @@ export interface Bet {
   analysis?: AnalysisResult;
   sum: number;
   sumStatus: 'low' | 'ideal' | 'high';
+  advancedMetrics?: AdvancedBetMetrics;
 }
 
 export interface GeneratorLogic {
@@ -33,6 +66,17 @@ export interface GeneratorLogic {
   concentrate20to50: boolean;
   max2Consecutive: boolean;
   max2IdenticalEndings: boolean;
+  preferHistoricalHotNumbers?: boolean;
+  // Pilares da Análise Avançada
+  useAdvancedDuques?: boolean;
+  frameAndCenterBalance?: boolean;
+  balancePrimesAndFibonacci?: boolean;
+  paretoTopSelection?: boolean;
+  includeCycleDezenas?: boolean;
+  multiplesOfThreeBalance?: boolean;
+  rowAndColDispersion?: boolean;
+  // Estratégia de Cálculo Matemático
+  calculationStrategy?: CalculationStrategy;
 }
 
 export interface ContestDraw {

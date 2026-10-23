@@ -27,18 +27,28 @@ import {
   HelpCircle,
   Eye,
   Calculator,
-  RefreshCw
+  RefreshCw,
+  BarChart3,
+  Flame,
+  Target,
+  Grid3X3
 } from 'lucide-react';
 import { generateLuckyNumbersWithAI, analyzeBetHistory, generateBatchLuckyNumbersWithAI } from './services/geminiService';
-import { Bet, GeneratorLogic } from './types';
-import { validateGameAgainstRules, generateGameWithRules } from './utils/lotteryRules';
+import { Bet, GeneratorLogic, CalculationStrategy } from './types';
+import { 
+  validateGameAgainstRules, 
+  generateGameWithRules, 
+  buildAdvancedBetMetrics,
+  autoOptimizeGameNumbers 
+} from './utils/lotteryRules';
 import NumberBall from './components/NumberBall';
 import BetCard from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
+import AdvancedAnalyticsView from './components/AdvancedAnalyticsView';
 import { jsPDF } from 'jspdf';
 
 const STORAGE_KEY = 'mega_sorte_bets';
-const LOGIC_KEY = 'mega_sorte_logic';
+const LOGIC_KEY = 'mega_sorte_logic_v2';
 const DEFAULT_REFERENCE_DRAW = [5, 12, 26, 33, 44, 58]; // Concurso recente de referência
 
 const App: React.FC = () => {
@@ -49,12 +59,12 @@ const App: React.FC = () => {
   const [isBatchLoading, setIsBatchLoading] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState("");
-  const [activeTab, setActiveTab] = useState<'play' | 'history' | 'checker'>('play');
+  const [activeTab, setActiveTab] = useState<'play' | 'analytics' | 'history' | 'checker'>('play');
   
   // Toast de feedback não intrusivo
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' | 'error' } | null>(null);
 
-  // Lógica de regras estatísticas selecionáveis pelo usuário
+  // Lógica de regras estatísticas selecionáveis pelo usuário (inclui Análise Avançada)
   const [logicOptions, setLogicOptions] = useState<GeneratorLogic>(() => {
     const saved = localStorage.getItem(LOGIC_KEY);
     if (saved) {
@@ -69,7 +79,18 @@ const App: React.FC = () => {
       spreadDistribution: true,
       concentrate20to50: true,
       max2Consecutive: true,
-      max2IdenticalEndings: true
+      max2IdenticalEndings: true,
+      preferHistoricalHotNumbers: true,
+      // Pilares da Análise Avançada
+      useAdvancedDuques: true,
+      frameAndCenterBalance: true,
+      balancePrimesAndFibonacci: true,
+      paretoTopSelection: true,
+      includeCycleDezenas: true,
+      multiplesOfThreeBalance: true,
+      rowAndColDispersion: true,
+      // Estratégia de Cálculo Matemático
+      calculationStrategy: 'balanced'
     };
   });
 
@@ -141,8 +162,15 @@ const App: React.FC = () => {
     }
   };
 
-  const saveBet = (type: Bet['type'], numbers: number[], reasoning?: string, groundingUrls?: Bet['groundingUrls']) => {
+  const saveBet = (
+    type: Bet['type'], 
+    numbers: number[], 
+    reasoning?: string, 
+    groundingUrls?: Bet['groundingUrls'],
+    advancedMetrics?: Bet['advancedMetrics']
+  ) => {
     const { sum, sumStatus } = calculateSumData(numbers);
+    const resolvedAdvancedMetrics = advancedMetrics || buildAdvancedBetMetrics(validateGameAgainstRules(numbers, logicOptions, referenceDraw));
     const newBet: Bet = {
       id: Math.random().toString(36).substring(2, 11),
       numbers: [...numbers].sort((a, b) => a - b),
@@ -151,7 +179,8 @@ const App: React.FC = () => {
       reasoning,
       groundingUrls,
       sum,
-      sumStatus
+      sumStatus,
+      advancedMetrics: resolvedAdvancedMetrics
     };
     setHistory(prev => [newBet, ...prev]);
     return newBet;
@@ -168,21 +197,38 @@ const App: React.FC = () => {
     showToast("Aposta salva com sucesso no histórico permanente!");
   };
 
-  // Preencher cartela com as regras ativas instantaneamente
+  // Auto-otimizador com inteligência estatística para dezenas selecionadas
+  const handleAutoOptimizeSelected = () => {
+    if (selectedNumbers.length === 0) {
+      showToast("Selecione dezenas na cartela para auto-otimizar.", 'info');
+      return;
+    }
+    const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers);
+    setSelectedNumbers(optimizedNumbers);
+    setBetCount(optimizedNumbers.length);
+    showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
+  };
+
+  // Preencher cartela com as regras e análise avançada instantaneamente
   const handleFillBoardWithRules = () => {
     const result = generateGameWithRules(betCount, logicOptions, referenceDraw);
     setSelectedNumbers(result.numbers);
     showToast(result.passedAllRules 
-      ? "Cartela preenchida atendendo 100% das regras ativas!" 
-      : "Cartela preenchida com otimização estatística máxima!", 'success');
+      ? `Cartela preenchida com 100% das regras e Análise Avançada (Score: ${result.validation.advancedScore}%)!` 
+      : `Cartela preenchida com otimização analítica máxima (${result.validation.advancedScore}% conformidade)!`, 'success');
   };
 
-  // Gerador rápido com regras (salva direto no histórico)
+  // Gerador rápido pelas regras utilizando a Análise Avançada (salva direto no histórico)
   const handleQuickRuleGenerate = () => {
     const result = generateGameWithRules(betCount, logicOptions, referenceDraw);
-    saveBet('smart_rules', result.numbers, result.reasoning);
+    saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
     setSelectedNumbers(result.numbers);
-    showToast(`Jogo gerado e salvo (${result.numbers.join(' - ')})!`);
+    const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
+      logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
+      logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
+      logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
+    const duqueNote = result.advancedMetrics?.duqueName ? ` • Duque ${result.advancedMetrics.duqueName}` : '';
+    showToast(`Jogo gerado via [${strategyName}] (${result.numbers.map(n => n.toString().padStart(2, '0')).join(' - ')})${duqueNote}!`, 'success');
   };
 
   // Surpresinha clássica pura
@@ -208,11 +254,11 @@ const App: React.FC = () => {
       saveBet('ai', result.numbers, result.reasoning, result.groundingUrls);
       showToast("Jogo gerado com Inteligência Artificial e salvo!");
     } catch (error) {
-      // Fallback local garantido
+      // Fallback local garantido via análise avançada
       const fallback = generateGameWithRules(betCount, logicOptions, referenceDraw);
       setSelectedNumbers(fallback.numbers);
-      saveBet('smart_rules', fallback.numbers, fallback.reasoning);
-      showToast("Jogo gerado com sucesso via motor estatístico local!");
+      saveBet('smart_rules', fallback.numbers, fallback.reasoning, undefined, fallback.advancedMetrics);
+      showToast("Jogo gerado com sucesso via motor estatístico da Análise Avançada!");
     } finally {
       setIsLoading(false);
       setLoadingStatus("");
@@ -230,12 +276,12 @@ const App: React.FC = () => {
       showToast(`${result.games.length} jogos gerados e salvos no histórico!`);
       setActiveTab('history');
     } catch (error) {
-      // Fallback local gerando 5 jogos com regras
+      // Fallback local gerando 5 jogos com regras e análise avançada
       for (let i = 0; i < 5; i++) {
         const game = generateGameWithRules(6, logicOptions, referenceDraw);
-        saveBet('smart_rules', game.numbers, game.reasoning);
+        saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
       }
-      showToast("5 jogos gerados com sucesso via motor de regras estatísticas!");
+      showToast("5 jogos gerados com sucesso via motor de regras e análise avançada!");
       setActiveTab('history');
     } finally {
       setIsBatchLoading(false);
@@ -422,9 +468,17 @@ const App: React.FC = () => {
       spreadDistribution: enable,
       concentrate20to50: enable,
       max2Consecutive: enable,
-      max2IdenticalEndings: enable
+      max2IdenticalEndings: enable,
+      preferHistoricalHotNumbers: enable,
+      useAdvancedDuques: enable,
+      frameAndCenterBalance: enable,
+      balancePrimesAndFibonacci: enable,
+      paretoTopSelection: enable,
+      includeCycleDezenas: enable,
+      multiplesOfThreeBalance: enable,
+      rowAndColDispersion: enable
     });
-    showToast(enable ? "Todas as 7 regras estatísticas foram ativadas!" : "Todas as regras foram desativadas.", 'info');
+    showToast(enable ? "Todas as 15 regras estatísticas e analíticas foram ativadas!" : "Todas as regras foram desativadas.", 'info');
   };
 
   const activeRulesCount = Object.values(logicOptions).filter(Boolean).length;
@@ -458,17 +512,17 @@ const App: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] font-medium text-emerald-700/80">
-                Gerador estatístico e inteligente com regras personalizáveis
+                Estatísticas de todos os 3.071 concursos oficiais da Mega-Sena
               </p>
             </div>
           </div>
 
           {/* Navegação entre Abas */}
-          <nav className="flex items-center bg-emerald-50/80 p-1 rounded-2xl border border-emerald-200/60 shadow-inner">
+          <nav className="flex items-center bg-emerald-50/80 p-1 rounded-2xl border border-emerald-200/60 shadow-inner overflow-x-auto max-w-full">
             <button 
               type="button"
               onClick={() => setActiveTab('play')} 
-              className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 ${
+              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'play' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
               }`}
             >
@@ -478,24 +532,35 @@ const App: React.FC = () => {
 
             <button 
               type="button"
-              onClick={() => setActiveTab('history')} 
-              className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 ${
-                activeTab === 'history' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+              onClick={() => setActiveTab('analytics')} 
+              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'analytics' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
               }`}
             >
-              <History size={15} />
-              <span>HISTÓRICO ({history.length})</span>
+              <BarChart3 size={15} />
+              <span>ANÁLISE AVANÇADA</span>
             </button>
 
             <button 
               type="button"
               onClick={() => setActiveTab('checker')} 
-              className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 ${
+              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'checker' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
               }`}
             >
               <Award size={15} />
               <span>CONFERIR</span>
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => setActiveTab('history')} 
+              className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'history' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+              }`}
+            >
+              <History size={15} />
+              <span>HISTÓRICO ({history.length})</span>
             </button>
           </nav>
         </div>
@@ -762,6 +827,154 @@ const App: React.FC = () => {
                     <p className="text-base font-black">{currentValidation.repeatedCount} dezenas</p>
                     <span className="text-[10px] opacity-75">Padrão histórico</span>
                   </div>
+
+                  {/* Histórico Oficial (3.071 Concursos) */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    !logicOptions.preferHistoricalHotNumbers ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                    currentValidation.historicalHotValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Histórico (3.071)</span>
+                      {logicOptions.preferHistoricalHotNumbers && (currentValidation.historicalHotValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">2 a 4 Top</span>)}
+                    </div>
+                    <p className="text-base font-black">{currentValidation.historicalHotCount} no Top 20</p>
+                    <span className="text-[10px] opacity-75">Média ~{currentValidation.historicalAverageDraws}x sorteios</span>
+                  </div>
+
+                  {/* Duque Histórico (Análise Avançada) */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    !logicOptions.useAdvancedDuques ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                    currentValidation.duquesValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-slate-50/70 border-slate-200 text-slate-600'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Duque Histórico</span>
+                      {logicOptions.useAdvancedDuques && (currentValidation.duquesValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] text-slate-400">Opcional</span>)}
+                    </div>
+                    <p className="text-sm font-black truncate">{currentValidation.matchedDuque ? `${currentValidation.matchedDuque[0].toString().padStart(2, '0')} - ${currentValidation.matchedDuque[1].toString().padStart(2, '0')}` : 'Nenhum'}</p>
+                    <span className="text-[10px] opacity-75">{currentValidation.matchedDuqueName ? 'Par histórico forte' : 'Sem duque top 10'}</span>
+                  </div>
+
+                  {/* Moldura x Centro (Análise Avançada) */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    !logicOptions.frameAndCenterBalance ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                    currentValidation.frameCenterValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Moldura x Centro</span>
+                      {logicOptions.frameAndCenterBalance && (currentValidation.frameCenterValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">3M / 3C</span>)}
+                    </div>
+                    <p className="text-base font-black">{currentValidation.frameCount}M / {currentValidation.centerCount}C</p>
+                    <span className="text-[10px] opacity-75">Padrão de 76% dos sorteios</span>
+                  </div>
+
+                  {/* Primos & Fibonacci (Análise Avançada) */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    !logicOptions.balancePrimesAndFibonacci ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                    currentValidation.primesValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Primos & Fibo</span>
+                      {logicOptions.balancePrimesAndFibonacci && (currentValidation.primesValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">1 a 3</span>)}
+                    </div>
+                    <p className="text-base font-black">{currentValidation.primesCount} Primos • {currentValidation.fibonacciCount} Fib</p>
+                    <span className="text-[10px] opacity-75">Equilíbrio numérico</span>
+                  </div>
+
+                  {/* Top Pareto 80/20 & Ciclo */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    !logicOptions.paretoTopSelection ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                    currentValidation.paretoValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Top Pareto & Ciclo</span>
+                      {logicOptions.paretoTopSelection && (currentValidation.paretoValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">1 a 3</span>)}
+                    </div>
+                    <p className="text-base font-black">{currentValidation.paretoCount} Pareto • {currentValidation.cycleMissingCount} Ciclo</p>
+                    <span className="text-[10px] opacity-75">Score Analítico: {currentValidation.advancedScore}%</span>
+                  </div>
+
+                  {/* Entropia de Shannon (Dispersão Orgânica) */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    currentValidation.entropyLabel !== 'Baixa' ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Entropia (Shannon)</span>
+                      {currentValidation.entropyLabel !== 'Baixa' ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">Dispersar</span>}
+                    </div>
+                    <p className="text-base font-black">{currentValidation.shannonEntropy} bits</p>
+                    <span className="text-[10px] opacity-75">{currentValidation.entropyLabel} Dispersão</span>
+                  </div>
+
+                  {/* Pressão de Atraso (Z-Score) */}
+                  <div className={`p-2.5 rounded-xl border transition-colors ${
+                    currentValidation.hasHighPressureDezena ? 'bg-blue-50/70 border-blue-200 text-blue-900' : 'bg-slate-50/70 border-slate-200 text-slate-700'
+                  }`}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-bold text-[10px] uppercase">Pressão de Atraso</span>
+                      <span className="text-[10px] font-bold text-blue-700">Z: {currentValidation.delayZScoreMax}</span>
+                    </div>
+                    <p className="text-sm font-black truncate">{currentValidation.hasHighPressureDezena ? '⚡ Dezenas em Pressão' : 'Normalidade Histórica'}</p>
+                    <span className="text-[10px] opacity-75">μ=9.8 concursos</span>
+                  </div>
+                </div>
+
+                {/* Painel Dinâmico de Sugestões de Ajuste em Tempo Real & Diagnóstico Matemático */}
+                <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-50/90 via-teal-50/70 to-slate-50 border border-emerald-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-sm shadow-sm flex-shrink-0">
+                        💡
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-emerald-950 flex items-center space-x-2">
+                          <span>Diagnóstico Matemático &amp; Dicas de Ouro</span>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900">
+                            {currentValidation.advancedScore}% Conformidade
+                          </span>
+                        </h4>
+                        <p className="text-[10px] text-slate-600 font-medium">
+                          Entropia: <strong>{currentValidation.shannonEntropy} bits ({currentValidation.entropyLabel})</strong> • χ² Empírico: <strong>{currentValidation.chiSquareConformity}%</strong> • Lift Médio: <strong>{currentValidation.cooccurrenceLiftAvg}x</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    {selectedNumbers.length >= 4 && (
+                      <button
+                        type="button"
+                        onClick={handleAutoOptimizeSelected}
+                        className="self-start sm:self-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                        title="Ajusta e equilibra automaticamente para 100% de conformidade com a Análise Avançada"
+                      >
+                        <Sparkles size={13} />
+                        <span>Auto-Otimizar Jogo</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Dicas e Pontos Fortes */}
+                  <div className="space-y-2 text-xs">
+                    {currentValidation.smartSuggestions && currentValidation.smartSuggestions.length > 0 && (
+                      <div className="space-y-1">
+                        {currentValidation.smartSuggestions.map((sug, i) => (
+                          <div key={i} className="flex items-start space-x-2 text-amber-900 bg-amber-50/90 border border-amber-200/80 p-2.5 rounded-xl text-[11px] leading-tight">
+                            <span className="text-amber-600 font-bold flex-shrink-0">⚠️</span>
+                            <span>{sug}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {currentValidation.strengths && currentValidation.strengths.length > 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+                        {currentValidation.strengths.slice(0, 4).map((str, i) => (
+                          <div key={i} className="flex items-center space-x-1.5 text-emerald-900 bg-emerald-50/70 border border-emerald-200/60 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold leading-tight">
+                            <span className="text-emerald-600 font-bold">✓</span>
+                            <span className="truncate">{str}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -827,40 +1040,174 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Card 2: Gerador Instantâneo via Regras Locais */}
-              <div className="bg-white rounded-3xl p-5 border border-emerald-100 shadow-sm space-y-3">
+              {/* Card 2: Gerador Instantâneo via Regras Locais & Análise Avançada */}
+              <div className="bg-white rounded-3xl p-5 border border-emerald-200/80 shadow-sm space-y-4 relative overflow-hidden">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-black text-emerald-950 flex items-center space-x-2">
-                    <Zap size={18} className="text-emerald-600" />
-                    <span>Geração Rápida pelas Regras</span>
-                  </h3>
-                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-sm">
+                      <Zap size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-emerald-950 flex items-center space-x-1.5">
+                        <span>Geração Rápida pelas Regras</span>
+                      </h3>
+                      <span className="text-[10px] text-emerald-700 font-bold flex items-center space-x-1">
+                        <Sparkles size={11} className="text-emerald-600" />
+                        <span>Motor de Análise Avançada (3.071 Concursos)</span>
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-200 px-2 py-0.5 rounded-full">
                     Zero Espera
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Gera matematicamente em 10 milissegundos um jogo que cumpre com precisão cirúrgica todas as suas regras marcadas abaixo.
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Gera matematicamente em milissegundos jogos combinando <strong>Duques Históricos</strong>, <strong>Moldura/Centro</strong>, <strong>Primos &amp; Fibonacci</strong>, <strong>Pareto 80/20</strong> e <strong>Ciclo Atual</strong> da Mega-Sena.
                 </p>
-                <button 
-                  type="button"
-                  onClick={handleQuickRuleGenerate}
-                  className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 py-3 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-2 active:scale-[0.99]"
-                >
-                  <Zap size={16} className="text-emerald-600" />
-                  <span>GERAR & SALVAR AGORA</span>
-                </button>
+
+                {/* Seletor de Estratégia de Cálculo Matemático */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center space-x-1">
+                      <span>Estratégia de Cálculo Ativa:</span>
+                    </label>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      5 Modelos Matemáticos
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {[
+                      { 
+                        id: 'balanced', 
+                        label: '🎯 Padrão Ouro', 
+                        sub: 'Equilíbrio Bayesiano & Pareto',
+                        color: 'from-emerald-600 to-teal-700' 
+                      },
+                      { 
+                        id: 'momentum', 
+                        label: '🔥 Decaimento & Momentum', 
+                        sub: 'Peso exponencial recente',
+                        color: 'from-orange-600 to-amber-700' 
+                      },
+                      { 
+                        id: 'cycle_delay', 
+                        label: '⏳ Pressão & Ciclo', 
+                        sub: 'Z-Score de atraso crítico',
+                        color: 'from-blue-600 to-cyan-700' 
+                      },
+                      { 
+                        id: 'cooccurrence', 
+                        label: '🔗 Alta Afinidade', 
+                        sub: 'Duques com maior Lift',
+                        color: 'from-indigo-600 to-purple-700' 
+                      },
+                      { 
+                        id: 'entropy_shannon', 
+                        label: '🎲 Máxima Entropia', 
+                        sub: 'Dispersão de Shannon orgânica',
+                        color: 'from-purple-600 to-pink-700' 
+                      }
+                    ].map(strat => {
+                      const isActive = (logicOptions.calculationStrategy || 'balanced') === strat.id;
+                      return (
+                        <button
+                          key={strat.id}
+                          type="button"
+                          onClick={() => setLogicOptions(prev => ({ ...prev, calculationStrategy: strat.id as CalculationStrategy }))}
+                          className={`p-2 rounded-xl text-left border transition-all text-xs cursor-pointer ${
+                            isActive 
+                              ? 'border-emerald-500 bg-emerald-50/80 shadow-sm ring-1 ring-emerald-500' 
+                              : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-[11px] text-slate-900">{strat.label}</span>
+                            {isActive && <Check size={13} className="text-emerald-700 font-bold" />}
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-tight mt-0.5">{strat.sub}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Parâmetros do Modelo Selecionado */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[10px] space-y-1 text-slate-600">
+                    {logicOptions.calculationStrategy === 'momentum' ? (
+                      <p>
+                        <strong>Modelo Ativo:</strong> Decaimento Exponencial Temporal ($w = e^{'{-\\lambda \\Delta t}'}$). Prioriza dezenas com alto momentum nos últimos 50 concursos com multiplicador de 1.85x.
+                      </p>
+                    ) : logicOptions.calculationStrategy === 'cycle_delay' ? (
+                      <p>
+                        <strong>Modelo Ativo:</strong> Z-Score de Atraso Crítico ($Z \ge 1.35$) e fechamento do Ciclo Atual da Mega-Sena. Multiplicador de 2.30x em dezenas com atraso acima da média.
+                      </p>
+                    ) : logicOptions.calculationStrategy === 'cooccurrence' ? (
+                      <p>
+                        <strong>Modelo Ativo:</strong> Matriz de Lift de Afinidade Conjunta ($P(A \cap B)/[P(A) \cdot P(B)] \ge 1.20$). Prioriza duplas e trincas que saem juntas na história.
+                      </p>
+                    ) : logicOptions.calculationStrategy === 'entropy_shannon' ? (
+                      <p>
+                        <strong>Modelo Ativo:</strong> Entropia da Informação de Shannon ($H \ge 2.40$ bits). Espaçamento não-linear para evitar qualquer viés de aglomeração espacial.
+                      </p>
+                    ) : (
+                      <p>
+                        <strong>Modelo Ativo:</strong> Padrão Ouro Multi-Objetivo (Poisson $\mu=183$, Bernoulli $p=0.10$, Paridade 3x3/4x2, Moldura e Centro harmônicos).
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Tags dos pilares integrados na geração rápida */}
+                <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center space-x-1">
+                    <Target size={11} /> <span>Duques Top 10</span>
+                  </span>
+                  <span className="bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded-md flex items-center space-x-1">
+                    <Grid3X3 size={11} /> <span>3 Moldura / 3 Centro</span>
+                  </span>
+                  <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md flex items-center space-x-1">
+                    <Flame size={11} /> <span>Pareto 80/20</span>
+                  </span>
+                  <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md">
+                    Ciclo Ativo
+                  </span>
+                  <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md">
+                    Zona de Ouro
+                  </span>
+                </div>
+
+                <div className="pt-1 space-y-2">
+                  <button 
+                    type="button"
+                    onClick={handleQuickRuleGenerate}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer"
+                  >
+                    <Zap size={16} />
+                    <span>GERAR COM ANÁLISE AVANÇADA</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleFillBoardWithRules}
+                    className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center space-x-1.5 active:scale-[0.99]"
+                  >
+                    <Grid3X3 size={14} className="text-emerald-700" />
+                    <span>Preencher Cartela com Análise Avançada</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Card 3: Regras Estatísticas Selecionáveis */}
+              {/* Card 3: Regras Estatísticas e Análise Avançada Selecionáveis */}
               <div className="bg-white rounded-3xl p-5 border border-emerald-100 shadow-sm space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-black text-emerald-950 flex items-center space-x-1.5">
                       <SlidersHorizontal size={17} className="text-emerald-600" />
-                      <span>Regras Estatísticas</span>
+                      <span>Regras e Análise Avançada</span>
                     </h3>
                     <span className="text-[11px] text-emerald-700 font-semibold">
-                      {activeRulesCount} de 7 ativas
+                      {activeRulesCount} de 15 regras ativas
                     </span>
                   </div>
 
@@ -883,7 +1230,117 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="space-y-2.5">
+                {/* Subseção: Pilares da Análise Avançada (3.071 Concursos) */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md inline-block">
+                    Pilares da Análise Avançada Oficial
+                  </span>
+
+                  {/* Avançada 1: Duques */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors bg-amber-50/30 border border-amber-100/60">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.useAdvancedDuques)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, useAdvancedDuques: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Duques da Mega-Sena (Pares Históricos)</span>
+                      <span className="text-[10px] text-slate-500">Sorteia duplas com maior afinidade comprovada (ex: 10-53, 33-42, 05-37)</span>
+                    </div>
+                  </label>
+
+                  {/* Avançada 2: Moldura x Centro */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.frameAndCenterBalance)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, frameAndCenterBalance: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Equilíbrio Moldura x Centro</span>
+                      <span className="text-[10px] text-slate-500">Distribui 2–4 na moldura e 2–4 no centro (76% dos sorteios)</span>
+                    </div>
+                  </label>
+
+                  {/* Avançada 3: Primos e Fibonacci */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.balancePrimesAndFibonacci)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, balancePrimesAndFibonacci: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Primos & Fibonacci Balanceados</span>
+                      <span className="text-[10px] text-slate-500">Exige 1 a 3 primos e até 2 de Fibonacci (88% dos sorteios)</span>
+                    </div>
+                  </label>
+
+                  {/* Avançada 4: Pareto */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.paretoTopSelection)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, paretoTopSelection: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Princípio de Pareto (Top 12 Dezenas)</span>
+                      <span className="text-[10px] text-slate-500">Contempla 1 a 3 dezenas do Top 20% histórico que concentra mais prêmios</span>
+                    </div>
+                  </label>
+
+                  {/* Avançada 5: Ciclo Atual */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.includeCycleDezenas)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, includeCycleDezenas: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Dezenas Faltantes do Ciclo Atual</span>
+                      <span className="text-[10px] text-slate-500">Prioriza dezenas em busca do fechamento do ciclo corrente</span>
+                    </div>
+                  </label>
+
+                  {/* Avançada 6: Múltiplos de 3 */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.multiplesOfThreeBalance)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, multiplesOfThreeBalance: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Múltiplos de Três</span>
+                      <span className="text-[10px] text-slate-500">Exige 1 a 3 números múltiplos de 3 (83,4% de frequência)</span>
+                    </div>
+                  </label>
+
+                  {/* Avançada 7: Linhas e Colunas */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.rowAndColDispersion)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, rowAndColDispersion: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Dispersão em Linhas & Colunas</span>
+                      <span className="text-[10px] text-slate-500">No máximo 2 dezenas na mesma linha ou coluna da cartela</span>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Subseção: Regras Clássicas da Cartela */}
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md inline-block">
+                    Regras Fundamentais da Cartela
+                  </span>
+
                   {/* Regra 1 */}
                   <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
                     <input 
@@ -922,7 +1379,7 @@ const App: React.FC = () => {
                     />
                     <div>
                       <span className="text-xs font-bold text-slate-800 block">Soma entre 160 – 240</span>
-                      <span className="text-[10px] text-slate-500">Faixa onde ocorrem mais de 78% dos prêmios principais</span>
+                      <span className="text-[10px] text-slate-500">Zona de Ouro onde ocorrem mais de 78% dos prêmios</span>
                     </div>
                   </label>
 
@@ -981,10 +1438,29 @@ const App: React.FC = () => {
                       <span className="text-[10px] text-slate-500">Impede acumulação de terminação (ex: 14, 24, 34)</span>
                     </div>
                   </label>
+
+                  {/* Regra 8 - Histórico Oficial */}
+                  <label className="flex items-start space-x-2.5 p-2 rounded-xl hover:bg-emerald-50/50 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={Boolean(logicOptions.preferHistoricalHotNumbers)} 
+                      onChange={(e) => setLogicOptions({ ...logicOptions, preferHistoricalHotNumbers: e.target.checked })} 
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4" 
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">Priorizar Top Histórico Oficial</span>
+                      <span className="text-[10px] text-slate-500">Favorece dezenas mais sorteadas em todos os 3.071 concursos oficiais</span>
+                    </div>
+                  </label>
                 </div>
               </div>
             </div>
           </div>
+        )}
+
+        {/* Aba de Análise Estatística Avançada (20 Módulos Oficiais) */}
+        {activeTab === 'analytics' && (
+          <AdvancedAnalyticsView />
         )}
 
         {/* Aba 2: Histórico Permanente Completo */}
