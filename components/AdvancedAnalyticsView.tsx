@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { 
   Table, 
   Flame, 
@@ -39,9 +39,11 @@ interface AdvancedAnalyticsViewProps {
 }
 
 export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({ latestDraw }) => {
+  const deferredLatestDraw = useDeferredValue(latestDraw);
+
   const dynamicDraws = useMemo(() => {
-    return buildDrawsListWithLatest(latestDraw);
-  }, [latestDraw]);
+    return buildDrawsListWithLatest(deferredLatestDraw);
+  }, [deferredLatestDraw]);
 
   const analytics = useMemo(() => {
     return computeAllMegaSenaAnalytics(dynamicDraws);
@@ -52,8 +54,9 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({ la
     'table' | 'behavior_cycle' | 'par_impar_repeat' | 'primes_fibo_mult3' | 'board_geometry' | 'duques_pareto' | 'positions_binary'
   >('table');
 
-  // Filtros da Tabela Geral
+  // Filtros da Tabela Geral com useDeferredValue
   const [tableSearch, setTableSearch] = useState('');
+  const deferredTableSearch = useDeferredValue(tableSearch);
   const [tableSort, setTableSort] = useState<'ranking' | 'delay' | 'number' | 'draws'>('ranking');
   const [statusFilter, setStatusFilter] = useState<'all' | 'quente' | 'morna' | 'fria'>('all');
 
@@ -65,8 +68,8 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({ la
       list = list.filter(n => n.status === statusFilter);
     }
 
-    if (tableSearch.trim()) {
-      const searchNum = parseInt(tableSearch.trim(), 10);
+    if (deferredTableSearch.trim()) {
+      const searchNum = parseInt(deferredTableSearch.trim(), 10);
       if (!isNaN(searchNum)) {
         list = list.filter(n => n.number === searchNum);
       }

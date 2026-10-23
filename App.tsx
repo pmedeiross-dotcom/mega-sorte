@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { 
   Sparkles, 
   Dice5, 
@@ -84,6 +84,8 @@ const App: React.FC = () => {
   const [isBatchLoading, setIsBatchLoading] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState("");
+  const [isRuleGenerating, setIsRuleGenerating] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [activeTab, setActiveTab] = useState<'play' | 'simulator' | 'analytics' | 'history' | 'checker'>('play');
   
   // Toast de feedback não intrusivo
@@ -310,10 +312,18 @@ const App: React.FC = () => {
     return { sum, sumStatus };
   };
 
+  // Diferimento dos estados via useDeferredValue para garantir 60 FPS na interação com a cartela
+  // e evitar engasgos durante a verificação das 15 regras estatísticas e análise avançada
+  const deferredSelectedNumbers = useDeferredValue(selectedNumbers);
+  const deferredLogicOptions = useDeferredValue(logicOptions);
+  const deferredOfficialNumbers = useDeferredValue(latestOfficialDraw.numbers);
+
   // Diagnóstico em tempo real da seleção atual na cartela integrando o último concurso
   const currentValidation = useMemo(() => {
-    return validateGameAgainstRules(selectedNumbers, logicOptions, latestOfficialDraw.numbers);
-  }, [selectedNumbers, logicOptions, latestOfficialDraw.numbers]);
+    return validateGameAgainstRules(deferredSelectedNumbers, deferredLogicOptions, deferredOfficialNumbers);
+  }, [deferredSelectedNumbers, deferredLogicOptions, deferredOfficialNumbers]);
+
+  const isRulesPending = selectedNumbers !== deferredSelectedNumbers;
 
   const toggleNumber = (num: number) => {
     if (selectedNumbers.includes(num)) {
@@ -394,38 +404,58 @@ const App: React.FC = () => {
     showToast("Aposta salva com sucesso no histórico permanente!");
   };
 
-  // Auto-otimizador com inteligência estatística para dezenas selecionadas
+  // Auto-otimizador com inteligência estatística para dezenas selecionadas com setTimeout de debounce
   const handleAutoOptimizeSelected = () => {
     if (selectedNumbers.length === 0) {
       showToast("Selecione dezenas na cartela para auto-otimizar.", 'info');
       return;
     }
-    const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers);
-    setSelectedNumbers(optimizedNumbers);
-    setBetCount(optimizedNumbers.length);
-    showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
+    setIsOptimizing(true);
+    setTimeout(() => {
+      try {
+        const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers);
+        setSelectedNumbers(optimizedNumbers);
+        setBetCount(optimizedNumbers.length);
+        showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
+      } finally {
+        setIsOptimizing(false);
+      }
+    }, 20);
   };
 
-  // Preencher cartela com as regras e análise avançada integrando o último concurso
+  // Preencher cartela com as regras e análise avançada integrando o último concurso com setTimeout debounce
   const handleFillBoardWithRules = () => {
-    const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
-    setSelectedNumbers(result.numbers);
-    showToast(result.passedAllRules 
-      ? `Cartela preenchida integrando o Concurso #${latestOfficialDraw.contestNumber} (Score: ${result.validation.advancedScore}%)!` 
-      : `Cartela preenchida com otimização analítica (${result.validation.advancedScore}% conformidade)!`, 'success');
+    setIsRuleGenerating(true);
+    setTimeout(() => {
+      try {
+        const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
+        setSelectedNumbers(result.numbers);
+        showToast(result.passedAllRules 
+          ? `Cartela preenchida integrando o Concurso #${latestOfficialDraw.contestNumber} (Score: ${result.validation.advancedScore}%)!` 
+          : `Cartela preenchida com otimização analítica (${result.validation.advancedScore}% conformidade)!`, 'success');
+      } finally {
+        setIsRuleGenerating(false);
+      }
+    }, 20);
   };
 
-  // Gerador rápido pelas regras utilizando a Análise Avançada e o último concurso oficial
+  // Gerador rápido pelas regras utilizando a Análise Avançada com setTimeout de debounce não bloqueante
   const handleQuickRuleGenerate = () => {
-    const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
-    saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
-    setSelectedNumbers(result.numbers);
-    const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
-      logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
-      logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
-      logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
-    const duqueNote = result.advancedMetrics?.duqueName ? ` • Duque ${result.advancedMetrics.duqueName}` : '';
-    showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
+    setIsRuleGenerating(true);
+    setTimeout(() => {
+      try {
+        const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
+        saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
+        setSelectedNumbers(result.numbers);
+        const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
+          logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
+          logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
+          logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
+        showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
+      } finally {
+        setIsRuleGenerating(false);
+      }
+    }, 20);
   };
 
   // Surpresinha clássica pura
@@ -1228,11 +1258,12 @@ const App: React.FC = () => {
                       <button
                         type="button"
                         onClick={handleAutoOptimizeSelected}
-                        className="self-start sm:self-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                        disabled={isOptimizing}
+                        className="self-start sm:self-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-sm flex items-center space-x-1.5 cursor-pointer"
                         title="Ajusta e equilibra automaticamente para 100% de conformidade com a Análise Avançada"
                       >
-                        <Sparkles size={13} />
-                        <span>Auto-Otimizar Jogo</span>
+                        <Sparkles size={13} className={isOptimizing ? 'animate-spin' : ''} />
+                        <span>{isOptimizing ? 'Otimizando...' : 'Auto-Otimizar Jogo'}</span>
                       </button>
                     )}
                   </div>

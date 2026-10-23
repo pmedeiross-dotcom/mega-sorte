@@ -2,7 +2,8 @@
 import React from 'react';
 
 interface NumberBallProps {
-  num: number;
+  num?: number;
+  number?: number;
   isSelected?: boolean;
   isHit?: boolean;
   onClick?: () => void;
@@ -12,12 +13,14 @@ interface NumberBallProps {
 
 const NumberBall: React.FC<NumberBallProps> = ({ 
   num, 
+  number,
   isSelected, 
   isHit,
   onClick, 
   size = 'md',
   disabled = false
 }) => {
+  const actualNum = num ?? number ?? 0;
   const sizeClasses = {
     xs: 'w-7 h-7 text-[11px]',
     sm: 'w-8 h-8 text-xs',
@@ -38,7 +41,7 @@ const NumberBall: React.FC<NumberBallProps> = ({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label={`Número ${num}`}
+      aria-label={`Número ${actualNum}`}
       aria-pressed={isSelected}
       className={`
         relative flex items-center justify-center rounded-full font-bold transition-all duration-150 select-none
@@ -47,7 +50,7 @@ const NumberBall: React.FC<NumberBallProps> = ({
         ${stateClasses}
       `}
     >
-      <span>{num.toString().padStart(2, '0')}</span>
+      <span>{actualNum.toString().padStart(2, '0')}</span>
       {isHit && (
         <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
