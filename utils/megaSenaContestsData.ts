@@ -10,7 +10,7 @@ export interface MegaDraw {
   rawOrder?: number[]; // Ordem original do sorteio
 }
 
-// Conjunto com os últimos 100 concursos oficiais detalhados extraídos dos registros oficiais
+// Conjunto com os últimos concursos oficiais detalhados extraídos dos registros oficiais
 export const RECENT_OFFICIAL_DRAWS: MegaDraw[] = [
   { contest: 3069, date: "11/10/2026", numbers: [5, 19, 22, 44, 47, 57], rawOrder: [47, 5, 22, 44, 57, 19] },
   { contest: 3068, date: "08/10/2026", numbers: [7, 10, 39, 40, 43, 57], rawOrder: [7, 43, 10, 39, 57, 40] },
@@ -78,3 +78,4 @@ export const RECENT_OFFICIAL_DRAWS: MegaDraw[] = [
 
 // Total oficial consolidado
 export const TOTAL_CONTESTS_COUNT = 3069;
+export const MEGA_SENA_OFFICIAL_DRAWS = RECENT_OFFICIAL_DRAWS;

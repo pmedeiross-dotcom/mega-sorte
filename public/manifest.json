@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Mega Sorte - Gerador e Estatísticas Loterias",
+  "short_name": "MegaSorte",
+  "description": "Gerador inteligente, estatísticas avançadas e conferência para Mega-Sena e +Milionária com funcionamento 100% offline.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#064e3b",
+  "theme_color": "#209869",
+  "icons": [
+    {
+      "src": "/assets/aistudio/image_2da9f556.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/aistudio/image_79943980.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

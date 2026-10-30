@@ -85,6 +85,17 @@ export interface EvenOddDistribution {
   occurrences: number;
   percentage: number;
   description: string;
+  matchedInLatest?: {
+    isMatch: boolean;
+    contestNumber: number;
+    evenNumbers: number[];
+    oddNumbers: number[];
+  };
+  mostFrequentNumbers?: {
+    evens: number[];
+    odds: number[];
+  };
+  recentExamples?: Array<{ contest: number; evens: number[]; odds: number[] }>;
 }
 
 // 5. Dezenas Repetidas do Concurso Anterior
@@ -93,6 +104,14 @@ export interface RepeatFromPreviousStats {
   occurrences: number;
   percentage: number;
   description: string;
+  matchedInLatest?: {
+    isMatch: boolean;
+    contestNumber: number;
+    previousContestNumber: number;
+    repeatedNumbers: number[];
+  };
+  historicalTopRepeatedNumbers?: Array<{ number: number; count: number }>;
+  recentOccurrences?: Array<{ contest: number; numbers: number[] }>;
 }
 
 // 6. Duques Mais Frequentes (Pares de números)
@@ -108,6 +127,13 @@ export interface GroupDistributionStats {
   countInDraw: number;
   occurrences: number;
   percentage: number;
+  matchedInLatest?: {
+    isMatch: boolean;
+    contestNumber: number;
+    numbersFound: number[];
+  };
+  poolNumbers?: number[];
+  recentExamples?: Array<{ contest: number; numbers: number[] }>;
 }
 
 // 8. Posições Ordenadas
@@ -265,7 +291,19 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     averageDrawsToCloseCycle: 28.4
   };
 
-  // 4. Distribuição de Pares e Ímpares em todos os concursos
+  // Dados do último concurso para cruzamento de números encontrados
+  const latestDraw = drawsList[0];
+  const previousDraw = drawsList[1];
+  const latestNumbers = latestDraw ? latestDraw.numbers : [];
+  const prevNumbers = previousDraw ? previousDraw.numbers : [];
+  const latestRepeated = latestNumbers.filter(n => prevNumbers.includes(n));
+  const latestEvens = latestNumbers.filter(n => n % 2 === 0);
+  const latestOdds = latestNumbers.filter(n => n % 2 !== 0);
+  const latestPrimes = latestNumbers.filter(n => PRIME_NUMBERS.includes(n));
+  const latestFibo = latestNumbers.filter(n => FIBONACCI_NUMBERS.includes(n));
+  const latestMult3 = latestNumbers.filter(n => MULTIPLES_OF_THREE.includes(n));
+
+  // 4. Distribuição de Pares e Ímpares em todos os concursos com grupos encontrados
   const evenOddStats: EvenOddDistribution[] = [
     { pattern: "3 Pares / 3 Ímpares", even: 3, odd: 3, occurrences: 965, percentage: 31.4, description: "Distribuição mais frequente e equilibrada de toda a história." },
     { pattern: "4 Pares / 2 Ímpares", even: 4, odd: 2, occurrences: 746, percentage: 24.3, description: "2º padrão mais premiado na história da Mega-Sena." },
@@ -274,16 +312,52 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     { pattern: "1 Par / 5 Ímpares", even: 1, odd: 5, occurrences: 267, percentage: 8.7, description: "Baixa incidência histórica." },
     { pattern: "6 Pares / 0 Ímpar", even: 6, odd: 0, occurrences: 46, percentage: 1.5, description: "Extremamente raro (menos de 2% dos concursos)." },
     { pattern: "0 Par / 6 Ímpares", even: 0, odd: 6, occurrences: 43, percentage: 1.4, description: "Extremamente raro (menos de 2% dos concursos)." }
+  ].map(item => {
+    const isLatest = latestEvens.length === item.even && latestOdds.length === item.odd;
+    return {
+      ...item,
+      matchedInLatest: {
+        isMatch: isLatest,
+        contestNumber: latestContest,
+        evenNumbers: isLatest ? latestEvens : [],
+        oddNumbers: isLatest ? latestOdds : []
+      },
+      mostFrequentNumbers: {
+        evens: [10, 42, 34, 4, 38],
+        odds: [53, 5, 37, 27, 33]
+      }
+    };
+  });
+
+  // 5. Repetidas do Concurso Anterior com números encontrados
+  const topHistoricalRepeatedMega = [
+    { number: 10, count: 48 },
+    { number: 53, count: 46 },
+    { number: 5, count: 44 },
+    { number: 37, count: 42 },
+    { number: 33, count: 41 },
+    { number: 27, count: 40 }
   ];
 
-  // 5. Repetidas do Concurso Anterior
   const repeatPreviousStats: RepeatFromPreviousStats[] = [
     { repeatCount: 1, occurrences: 1326, percentage: 43.2, description: "Cenário mais provável: exatamente 1 dezena do concurso anterior se repete." },
     { repeatCount: 0, occurrences: 1092, percentage: 35.6, description: "Nenhuma dezena do concurso anterior repetida." },
     { repeatCount: 2, occurrences: 531, percentage: 17.3, description: "2 dezenas repetidas do concurso anterior." },
     { repeatCount: 3, occurrences: 107, percentage: 3.5, description: "3 dezenas repetidas (ocorrência rara)." },
     { repeatCount: 4, occurrences: 13, percentage: 0.4, description: "4 ou mais repetidas (raridade histórica)." }
-  ];
+  ].map(item => {
+    const isLatest = latestRepeated.length === item.repeatCount;
+    return {
+      ...item,
+      matchedInLatest: {
+        isMatch: isLatest,
+        contestNumber: latestContest,
+        previousContestNumber: previousDraw ? previousDraw.contest : latestContest - 1,
+        repeatedNumbers: isLatest ? latestRepeated : []
+      },
+      historicalTopRepeatedNumbers: topHistoricalRepeatedMega
+    };
+  });
 
   // 6. Números Primos
   const primeDistribution: GroupDistributionStats[] = [
@@ -294,7 +368,15 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     { countInDraw: 4, occurrences: 147, percentage: 4.8 },
     { countInDraw: 5, occurrences: 22, percentage: 0.7 },
     { countInDraw: 6, occurrences: 3, percentage: 0.1 }
-  ];
+  ].map(item => ({
+    ...item,
+    matchedInLatest: {
+      isMatch: latestPrimes.length === item.countInDraw,
+      contestNumber: latestContest,
+      numbersFound: latestPrimes.length === item.countInDraw ? latestPrimes : []
+    },
+    poolNumbers: PRIME_NUMBERS
+  }));
 
   // 7. Números de Fibonacci
   const fibonacciDistribution: GroupDistributionStats[] = [
@@ -303,7 +385,15 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     { countInDraw: 2, occurrences: 614, percentage: 20.0 },
     { countInDraw: 3, occurrences: 141, percentage: 4.6 },
     { countInDraw: 4, occurrences: 14, percentage: 0.4 }
-  ];
+  ].map(item => ({
+    ...item,
+    matchedInLatest: {
+      isMatch: latestFibo.length === item.countInDraw,
+      contestNumber: latestContest,
+      numbersFound: latestFibo.length === item.countInDraw ? latestFibo : []
+    },
+    poolNumbers: FIBONACCI_NUMBERS
+  }));
 
   // 8. Múltiplos de 3
   const multiplesOfThreeDistribution: GroupDistributionStats[] = [
@@ -313,7 +403,15 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     { countInDraw: 0, occurrences: 307, percentage: 10.0 },
     { countInDraw: 4, occurrences: 178, percentage: 5.8 },
     { countInDraw: 5, occurrences: 24, percentage: 0.8 }
-  ];
+  ].map(item => ({
+    ...item,
+    matchedInLatest: {
+      isMatch: latestMult3.length === item.countInDraw,
+      contestNumber: latestContest,
+      numbersFound: latestMult3.length === item.countInDraw ? latestMult3 : []
+    },
+    poolNumbers: MULTIPLES_OF_THREE
+  }));
 
   // 9. Faixas de Soma
   const sumRanges = [

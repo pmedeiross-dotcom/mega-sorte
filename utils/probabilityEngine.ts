@@ -4,19 +4,26 @@
  * e Simulação de Monte Carlo para análise de carteiras de apostas salvas.
  */
 
-import { Bet, OfficialDrawResult } from '../types';
+import { Bet, OfficialDrawResult, LotteryType } from '../types';
 import { OFFICIAL_FREQUENCY_DATA, TOP_10_HISTORICAL } from './megaSenaOfficialStats';
+import { MAIS_MILIONARIA_FREQUENCY_DATA, TOP_10_MAIS_MILIONARIA } from './maisMilionariaOfficialStats';
 
 // Total de combinações possíveis de 6 números dentre 60
 export const TOTAL_COMBINATIONS_MEGA_SENA = 50063860; // C(60, 6)
+export const TOTAL_COMBINATIONS_MAIS_MILIONARIA = 15890700; // C(50, 6)
+export const TOTAL_COMBINATIONS_MAIS_MILIONARIA_JACKPOT = 238360500; // C(50, 6) * C(6, 2)
 
-// Custo oficial da aposta simples (6 números)
+// Custo oficial da aposta simples
 export const OFFICIAL_TICKET_PRICE = 5.0;
+export const OFFICIAL_TICKET_PRICE_MAIS_MILIONARIA = 6.0;
 
 // Valores médios estimados de premiação oficial (Caixa)
 export const AVERAGE_PRIZE_SENA = 42000000; // R$ 42 Milhões (ou prêmio acumulado)
 export const AVERAGE_PRIZE_QUINA = 48500;   // R$ 48.500
 export const AVERAGE_PRIZE_QUADRA = 890;    // R$ 890
+export const AVERAGE_PRIZE_MAIS_MILIONARIA_JACKPOT = 25000000; // R$ 25 Milhões
+export const AVERAGE_PRIZE_MAIS_MILIONARIA_FAIXA2 = 180000;   // 6 acertos + 1 ou 0 trevo
+export const AVERAGE_PRIZE_MAIS_MILIONARIA_FAIXA3 = 35000;    // 5 acertos + 2 trevos
 
 // Concursos por ano da Mega-Sena (3 por semana: terças, quintas e sábados)
 export const DRAWS_PER_YEAR = 156;
@@ -156,14 +163,26 @@ function getCombinations(arr: number[], k: number): number[][] {
  * Calcula todas as probabilidades matemáticas e correlações estatísticas
  * da carteira de apostas salvas do usuário.
  */
-export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbabilityStats {
+export function calculatePortfolioProbability(
+  savedBets: Bet[], 
+  lottery: LotteryType = 'megasena'
+): PortfolioProbabilityStats {
+  const isMaisMilionaria = lottery === 'maismilionaria';
+  const totalCombosUniverse = isMaisMilionaria ? TOTAL_COMBINATIONS_MAIS_MILIONARIA : TOTAL_COMBINATIONS_MEGA_SENA;
+  const maxUniverse = isMaisMilionaria ? 50 : 60;
+  const goldMin = isMaisMilionaria ? 120 : 160;
+  const goldMax = isMaisMilionaria ? 185 : 240;
+  const singleTicketPrice = isMaisMilionaria ? 6.0 : 5.0;
+  const drawsPerYear = isMaisMilionaria ? 104 : DRAWS_PER_YEAR;
+  const top10List = isMaisMilionaria 
+    ? TOP_10_MAIS_MILIONARIA.map(t => t.number)
+    : TOP_10_HISTORICAL.map(t => t.number);
+
   if (!savedBets || savedBets.length === 0) {
-    // Retorna valores padrão para carteira vazia (1 aposta base de referência)
-    const baseCombinations = 1;
-    const senaProb = 1 / TOTAL_COMBINATIONS_MEGA_SENA;
-    const quinaProb = 324 / TOTAL_COMBINATIONS_MEGA_SENA;
-    const quadraProb = 21465 / TOTAL_COMBINATIONS_MEGA_SENA;
-    const ternoProb = 496080 / TOTAL_COMBINATIONS_MEGA_SENA;
+    const senaProb = 1 / totalCombosUniverse;
+    const quinaProb = (6 * (maxUniverse - 6)) / totalCombosUniverse;
+    const quadraProb = (15 * combinations(maxUniverse - 6, 2)) / totalCombosUniverse;
+    const ternoProb = (20 * combinations(maxUniverse - 6, 3)) / totalCombosUniverse;
 
     return {
       totalGames: 0,
@@ -171,7 +190,7 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
       uniqueCombinations: 0,
       totalCost: 0,
       senaProbability: senaProb,
-      senaOddsOneIn: TOTAL_COMBINATIONS_MEGA_SENA,
+      senaOddsOneIn: totalCombosUniverse,
       senaMultiplierVsSingle: 1,
       quinaProbability: quinaProb,
       quinaOddsOneIn: Math.round(1 / quinaProb),
@@ -181,18 +200,18 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
       quadraMultiplierVsSingle: 1,
       ternoProbability: ternoProb,
       ternoOddsOneIn: Math.round(1 / ternoProb),
-      estimatedDrawsForQuadra: 2332,
-      estimatedYearsForQuadra: +(2332 / DRAWS_PER_YEAR).toFixed(1),
-      estimatedDrawsForQuina: 154518,
-      estimatedYearsForQuina: +(154518 / DRAWS_PER_YEAR).toFixed(1),
-      estimatedDrawsForSena: TOTAL_COMBINATIONS_MEGA_SENA,
-      estimatedYearsForSena: +(TOTAL_COMBINATIONS_MEGA_SENA / DRAWS_PER_YEAR).toFixed(0),
+      estimatedDrawsForQuadra: Math.round(1 / quadraProb),
+      estimatedYearsForQuadra: +(Math.round(1 / quadraProb) / drawsPerYear).toFixed(1),
+      estimatedDrawsForQuina: Math.round(1 / quinaProb),
+      estimatedYearsForQuina: +(Math.round(1 / quinaProb) / drawsPerYear).toFixed(1),
+      estimatedDrawsForSena: totalCombosUniverse,
+      estimatedYearsForSena: +(totalCombosUniverse / drawsPerYear).toFixed(0),
       distinctNumbersCount: 0,
       distinctNumbers: [],
-      missingNumbers: Array.from({ length: 60 }, (_, i) => i + 1),
+      missingNumbers: Array.from({ length: maxUniverse }, (_, i) => i + 1),
       coveragePercentage: 0,
       topHistoricalCoveredCount: 0,
-      topHistoricalMissing: TOP_10_HISTORICAL.map(t => t.number),
+      topHistoricalMissing: top10List,
       averageSum: 0,
       sumInGoldZonePercentage: 0,
       balancedParityPercentage: 0,
@@ -220,7 +239,9 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
     const len = nums.length;
     
     // Custo
-    const cost = BET_COST_BY_SIZE[len] || 5.0 * combinations(len, 6);
+    const cost = isMaisMilionaria
+      ? (singleTicketPrice * combinations(len, 6))
+      : (BET_COST_BY_SIZE[len] || 5.0 * combinations(len, 6));
     totalCost += cost;
 
     // Números distintos
@@ -229,7 +250,7 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
     // Soma
     const s = nums.reduce((acc, n) => acc + n, 0);
     totalSum += s;
-    if (s >= 160 && s <= 240) {
+    if (s >= goldMin && s <= goldMax) {
       goldZoneCount++;
     }
 
@@ -245,14 +266,12 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
       totalEquivCombos += 1;
       unique6CombosSet.add(toComboKey(nums));
 
-      // Subcombinações de 5 e 4
       const sub5 = getCombinations(nums, 5);
       sub5.forEach(c => allSub5CombosSet.add(toComboKey(c)));
 
       const sub4 = getCombinations(nums, 4);
       sub4.forEach(c => allSub4CombosSet.add(toComboKey(c)));
     } else if (len > 6) {
-      // Jogo múltiplo (desdobramento)
       const combos6 = getCombinations(nums, 6);
       totalEquivCombos += combos6.length;
       combos6.forEach(c => unique6CombosSet.add(toComboKey(c)));
@@ -270,71 +289,60 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
   const uniqueSub4Count = allSub4CombosSet.size;
 
   // 2. Probabilidades Exatas / Hipergeométricas Corrigidas
-  // Sena: Eventos estritamente disjuntos por combinação única de 6
-  const senaProb = uniqueCombosCount / TOTAL_COMBINATIONS_MEGA_SENA;
-  const senaOddsOneIn = Math.max(1, Math.round(TOTAL_COMBINATIONS_MEGA_SENA / uniqueCombosCount));
+  const senaProb = uniqueCombosCount / totalCombosUniverse;
+  const senaOddsOneIn = Math.max(1, Math.round(totalCombosUniverse / uniqueCombosCount));
   const senaMultiplierVsSingle = uniqueCombosCount;
 
-  // Quina: Uma aposta simples de 6 cobre 6 subconjuntos de 5 dezenas (cada um gerando 54 quinas possíveis).
-  // A união de quinas cobertas pelo portfólio depende dos 5-subconjuntos únicos.
-  // Limite superior de Poisson / Bonferroni para união: 1 - exp(-lambda)
-  const singleQuinaProb = 324 / TOTAL_COMBINATIONS_MEGA_SENA;
-  const quinaCoverageRatio = uniqueSub5Count / (savedBets.length * 6);
-  // Probabilidade da união de Quinas:
-  const quinaExpectedHits = (uniqueSub5Count * 54) / TOTAL_COMBINATIONS_MEGA_SENA;
+  const singleQuinaProb = (6 * (maxUniverse - 6)) / totalCombosUniverse;
+  const quinaExpectedHits = (uniqueSub5Count * (maxUniverse - 6)) / totalCombosUniverse;
   const quinaProb = Math.min(0.999999, 1 - Math.exp(-quinaExpectedHits));
   const quinaOddsOneIn = Math.max(1, Math.round(1 / quinaProb));
   const quinaMultiplierVsSingle = +(quinaProb / singleQuinaProb).toFixed(1);
 
-  // Quadra: Uma aposta simples de 6 cobre 15 subconjuntos de 4 dezenas (cada um com 1431 quadras possíveis).
-  const singleQuadraProb = 21465 / TOTAL_COMBINATIONS_MEGA_SENA;
-  const quadraExpectedHits = (uniqueSub4Count * 1431) / TOTAL_COMBINATIONS_MEGA_SENA;
+  const quadraMultiplierUnits = combinations(maxUniverse - 6, 2);
+  const singleQuadraProb = (15 * quadraMultiplierUnits) / totalCombosUniverse;
+  const quadraExpectedHits = (uniqueSub4Count * quadraMultiplierUnits) / totalCombosUniverse;
   const quadraProb = Math.min(0.999999, 1 - Math.exp(-quadraExpectedHits));
   const quadraOddsOneIn = Math.max(1, Math.round(1 / quadraProb));
   const quadraMultiplierVsSingle = +(quadraProb / singleQuadraProb).toFixed(1);
 
-  // Terno:
-  const singleTernoProb = 496080 / TOTAL_COMBINATIONS_MEGA_SENA;
+  const singleTernoProb = (20 * combinations(maxUniverse - 6, 3)) / totalCombosUniverse;
   const ternoExpectedHits = totalEquivCombos * singleTernoProb;
   const ternoProb = Math.min(0.999999, 1 - Math.exp(-ternoExpectedHits));
   const ternoOddsOneIn = Math.max(1, Math.round(1 / ternoProb));
 
-  // 3. Projeção de Tempo (156 sorteios/ano)
+  // 3. Projeção de Tempo
   const drawsForQuadra = Math.max(1, Math.round(quadraOddsOneIn));
-  const yearsForQuadra = +(drawsForQuadra / DRAWS_PER_YEAR).toFixed(1);
+  const yearsForQuadra = +(drawsForQuadra / drawsPerYear).toFixed(1);
 
   const drawsForQuina = Math.max(1, Math.round(quinaOddsOneIn));
-  const yearsForQuina = +(drawsForQuina / DRAWS_PER_YEAR).toFixed(1);
+  const yearsForQuina = +(drawsForQuina / drawsPerYear).toFixed(1);
 
   const drawsForSena = Math.max(1, Math.round(senaOddsOneIn));
-  const yearsForSena = +(drawsForSena / DRAWS_PER_YEAR).toFixed(0);
+  const yearsForSena = +(drawsForSena / drawsPerYear).toFixed(0);
 
   // 4. Dezenas e Cobertura
   const distinctNumbers = Array.from(distinctNumbersSet).sort((a, b) => a - b);
   const distinctNumbersCount = distinctNumbers.length;
-  const missingNumbers = Array.from({ length: 60 }, (_, i) => i + 1)
+  const missingNumbers = Array.from({ length: maxUniverse }, (_, i) => i + 1)
     .filter(n => !distinctNumbersSet.has(n));
-  const coveragePercentage = +((distinctNumbersCount / 60) * 100).toFixed(1);
+  const coveragePercentage = +((distinctNumbersCount / maxUniverse) * 100).toFixed(1);
 
-  // 5. Comparação com Histórico Oficial (3.071 concursos)
-  const top10Numbers = TOP_10_HISTORICAL.map(t => t.number);
-  const topCovered = top10Numbers.filter(n => distinctNumbersSet.has(n));
-  const topHistoricalMissing = top10Numbers.filter(n => !distinctNumbersSet.has(n));
+  // 5. Comparação com Histórico Oficial
+  const topCovered = top10List.filter(n => distinctNumbersSet.has(n));
+  const topHistoricalMissing = top10List.filter(n => !distinctNumbersSet.has(n));
 
   const averageSum = Math.round(totalSum / savedBets.length);
   const sumInGoldZonePercentage = Math.round((goldZoneCount / savedBets.length) * 100);
   const balancedParityPercentage = Math.round((balancedParityCount / savedBets.length) * 100);
 
   // 6. Taxa de Redundância e Eficiência de Cobertura
-  // Se todos os jogos fossem disjuntos, sub4 cresceria em fator de 15 por jogo
   const maxPossibleSub4 = savedBets.length * 15;
   const redundancyRate = savedBets.length > 1
     ? Math.max(0, Math.min(100, Math.round((1 - (uniqueSub4Count / maxPossibleSub4)) * 100)))
     : 0;
 
-  // Score Geral de Eficiência (0 a 100)
-  // Combina: cobertura ampla (35%), zona de ouro (25%), paridade (20%), presença de top históricas (20%)
-  const scoreCoverage = Math.min(100, (distinctNumbersCount / 36) * 100); // 36 dezenas é uma excelente cobertura
+  const scoreCoverage = Math.min(100, (distinctNumbersCount / (maxUniverse * 0.6)) * 100);
   const scoreGold = sumInGoldZonePercentage;
   const scoreParity = balancedParityPercentage;
   const scoreTop = (topCovered.length / 10) * 100;
@@ -349,15 +357,15 @@ export function calculatePortfolioProbability(savedBets: Bet[]): PortfolioProbab
   // 7. Dicas e Diagnóstico
   const recommendationTips: string[] = [];
   if (coveragePercentage < 35) {
-    recommendationTips.push(`Sua carteira cobre apenas ${distinctNumbersCount} dezenas (de 60). Tente distribuir as apostas para cobrir ao menos 25 a 35 dezenas.`);
+    recommendationTips.push(`Sua carteira cobre apenas ${distinctNumbersCount} dezenas (de ${maxUniverse}). Tente distribuir as apostas para cobrir ao menos 25 a 35 dezenas.`);
   } else {
     recommendationTips.push(`Excelente amplitude de cobertura: ${distinctNumbersCount} dezenas cobertas (${coveragePercentage}% da cartela).`);
   }
 
   if (sumInGoldZonePercentage < 60) {
-    recommendationTips.push(`Apenas ${sumInGoldZonePercentage}% dos seus jogos estão na Zona de Ouro (soma entre 160 e 240, onde ocorrem 78,4% dos sorteios oficiais).`);
+    recommendationTips.push(`Apenas ${sumInGoldZonePercentage}% dos seus jogos estão na Zona de Ouro (soma entre ${goldMin} e ${goldMax}).`);
   } else {
-    recommendationTips.push(`Ótimo equilíbrio de somas: ${sumInGoldZonePercentage}% das apostas estão na faixa matemática mais premiada (160 a 240).`);
+    recommendationTips.push(`Ótimo equilíbrio de somas: ${sumInGoldZonePercentage}% das apostas estão na faixa matemática mais premiada (${goldMin} a ${goldMax}).`);
   }
 
   if (topHistoricalMissing.length > 5) {

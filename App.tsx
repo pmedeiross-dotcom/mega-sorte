@@ -35,22 +35,37 @@ import {
   Cloud,
   LogOut,
   LogIn,
-  Globe
+  Globe,
+  GitCompare,
+  ArrowRight,
+  Clover,
+  Database,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { generateLuckyNumbersWithAI, analyzeBetHistory, generateBatchLuckyNumbersWithAI } from './services/geminiService';
-import { Bet, GeneratorLogic, CalculationStrategy, OfficialDrawResult } from './types';
+import { Bet, GeneratorLogic, CalculationStrategy, OfficialDrawResult, LotteryType } from './types';
 import { 
   validateGameAgainstRules, 
   generateGameWithRules, 
-  buildAdvancedBetMetrics,
+  buildAdvancedBetMetrics, 
   autoOptimizeGameNumbers 
 } from './utils/lotteryRules';
+import { generateMaisMilionariaGameWithRules } from './utils/maisMilionariaRules';
+import { LATEST_MAIS_MILIONARIA_DRAW } from './utils/maisMilionariaContestsData';
+import { buildDrawsListWithLatest } from './utils/megaSenaAdvancedAnalytics';
+import { buildMaisMilionariaDrawsListWithLatest } from './utils/maisMilionariaAdvancedAnalytics';
 import NumberBall from './components/NumberBall';
 import BetCard from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
 import AdvancedAnalyticsView from './components/AdvancedAnalyticsView';
 import LatestOfficialDrawCard from './components/LatestOfficialDrawCard';
 import ProbabilitySimulatorView from './components/ProbabilitySimulatorView';
+import GameComparatorView from './components/GameComparatorView';
+import SequenceAnalyticsView from './components/SequenceAnalyticsView';
+import WheelingSimulatorView from './components/WheelingSimulatorView';
+import CacheManagerModal from './components/CacheManagerModal';
+import { offlineCacheManager } from './services/offlineCacheManager';
 import { 
   getStoredLatestOfficialDraw, 
   saveStoredLatestOfficialDraw, 
@@ -77,6 +92,23 @@ const App: React.FC = () => {
   const [latestOfficialDraw, setLatestOfficialDraw] = useState<OfficialDrawResult>(() => getStoredLatestOfficialDraw());
   const [isFetchingDraw, setIsFetchingDraw] = useState<boolean>(false);
 
+  const [currentLottery, setCurrentLottery] = useState<LotteryType>('megasena');
+  const [latestMaisMilionariaDraw, setLatestMaisMilionariaDraw] = useState<OfficialDrawResult>(() => ({
+    contestNumber: LATEST_MAIS_MILIONARIA_DRAW.contest,
+    date: LATEST_MAIS_MILIONARIA_DRAW.date,
+    numbers: LATEST_MAIS_MILIONARIA_DRAW.numbers,
+    trevos: LATEST_MAIS_MILIONARIA_DRAW.trevos || [1, 2],
+    accumulated: true,
+    estimatedNextPrize: "R$ 10.000.000,00",
+    prizeSena: "Acumulado",
+    lastUpdated: Date.now(),
+    source: 'official_archive',
+    lottery: 'maismilionaria'
+  }));
+  const [selectedTrevos, setSelectedTrevos] = useState<number[]>([1, 2]);
+
+  const activeOfficialDraw = currentLottery === 'maismilionaria' ? latestMaisMilionariaDraw : latestOfficialDraw;
+
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [betCount, setBetCount] = useState<number>(6);
   const [history, setHistory] = useState<Bet[]>([]);
@@ -86,10 +118,16 @@ const App: React.FC = () => {
   const [loadingStatus, setLoadingStatus] = useState("");
   const [isRuleGenerating, setIsRuleGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'play' | 'simulator' | 'analytics' | 'history' | 'checker'>('play');
+  const [activeTab, setActiveTab] = useState<
+    'play' | 'simulator' | 'analytics' | 'sequences' | 'wheeling' | 'comparator' | 'history' | 'checker'
+  >('play');
   
   // Toast de feedback não intrusivo
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' | 'error' } | null>(null);
+
+  // Gerenciador de Cache Offline e Status de Conexão
+  const [isCacheModalOpen, setIsCacheModalOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState<boolean>(() => offlineCacheManager.isOnline());
 
   // Lógica de regras estatísticas selecionáveis pelo usuário (inclui Análise Avançada)
   const [logicOptions, setLogicOptions] = useState<GeneratorLogic>(() => {
@@ -240,14 +278,49 @@ const App: React.FC = () => {
     showToast(`Conferência restaurada para o Último Concurso Oficial Caixa #${latestOfficialDraw.contestNumber}!`, 'success');
   };
 
-  // Salvar histórico e regras em cache local
+  // Registrar Service Worker e escutar status de rede
+  useEffect(() => {
+    offlineCacheManager.registerServiceWorker();
+    const unsub = offlineCacheManager.subscribeNetworkStatus((online) => {
+      setIsOnline(online);
+    });
+    return () => unsub();
+  }, []);
+
+  // Aquecimento e pré-cálculo do Cache Offline em background
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const megaList = buildDrawsListWithLatest(latestOfficialDraw);
+      const maisList = buildMaisMilionariaDrawsListWithLatest(latestMaisMilionariaDraw);
+      offlineCacheManager.warmOfflineCache(megaList, maisList);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [latestOfficialDraw, latestMaisMilionariaDraw]);
+
+  // Salvar histórico e regras em cache local com backup secundário
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    offlineCacheManager.backupUserBets(history);
   }, [history]);
 
   useEffect(() => {
     localStorage.setItem(LOGIC_KEY, JSON.stringify(logicOptions));
   }, [logicOptions]);
+
+  const handleTriggerWarmUp = async () => {
+    const megaList = buildDrawsListWithLatest(latestOfficialDraw);
+    const maisList = buildMaisMilionariaDrawsListWithLatest(latestMaisMilionariaDraw);
+    await offlineCacheManager.warmOfflineCache(megaList, maisList);
+    showToast("Cache offline 100% atualizado e pré-calculado em alta velocidade!", 'success');
+  };
+
+  const handleClearLocalCache = () => {
+    offlineCacheManager.clearCache();
+    const megaList = buildDrawsListWithLatest(latestOfficialDraw);
+    const maisList = buildMaisMilionariaDrawsListWithLatest(latestMaisMilionariaDraw);
+    offlineCacheManager.warmOfflineCache(megaList, maisList);
+    showToast("Cache local limpo e reprocessado!", 'info');
+  };
 
   // Ações de Autenticação com Google
   const handleGoogleLogin = async () => {
@@ -349,6 +422,8 @@ const App: React.FC = () => {
     const newBet: Bet = {
       id: Math.random().toString(36).substring(2, 11),
       numbers: [...numbers].sort((a, b) => a - b),
+      trevos: currentLottery === 'maismilionaria' ? [...selectedTrevos].sort((a, b) => a - b) : undefined,
+      lottery: currentLottery,
       createdAt: Date.now(),
       type,
       reasoning,
@@ -439,19 +514,26 @@ const App: React.FC = () => {
     }, 20);
   };
 
-  // Gerador rápido pelas regras utilizando a Análise Avançada com setTimeout de debounce não bloqueante
   const handleQuickRuleGenerate = () => {
     setIsRuleGenerating(true);
     setTimeout(() => {
       try {
-        const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
-        saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
-        setSelectedNumbers(result.numbers);
-        const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
-          logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
-          logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
-          logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
-        showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
+        if (currentLottery === 'maismilionaria') {
+          const result = generateMaisMilionariaGameWithRules(betCount, logicOptions, latestMaisMilionariaDraw.numbers);
+          saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
+          setSelectedNumbers(result.numbers);
+          setSelectedTrevos(result.trevos);
+          showToast(`Jogo da +Milionária gerado com sucesso integrando Concurso #${latestMaisMilionariaDraw.contestNumber}!`, 'success');
+        } else {
+          const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
+          saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
+          setSelectedNumbers(result.numbers);
+          const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
+            logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
+            logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
+            logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
+          showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
+        }
       } finally {
         setIsRuleGenerating(false);
       }
@@ -460,14 +542,23 @@ const App: React.FC = () => {
 
   // Surpresinha clássica pura
   const generateSurpresinha = () => {
+    const maxVal = currentLottery === 'maismilionaria' ? 50 : 60;
     const numbers: number[] = [];
     while (numbers.length < betCount) {
-      const r = Math.floor(Math.random() * 60) + 1;
+      const r = Math.floor(Math.random() * maxVal) + 1;
       if (!numbers.includes(r)) numbers.push(r);
     }
     const sorted = numbers.sort((a, b) => a - b);
     setSelectedNumbers(sorted);
-    saveBet('random', sorted, "Surpresinha aleatória sem filtros estatísticos.");
+    if (currentLottery === 'maismilionaria') {
+      const trevos = [Math.floor(Math.random() * 6) + 1];
+      while (trevos.length < 2) {
+        const t = Math.floor(Math.random() * 6) + 1;
+        if (!trevos.includes(t)) trevos.push(t);
+      }
+      setSelectedTrevos(trevos.sort((a, b) => a - b));
+    }
+    saveBet('random', sorted, `Surpresinha aleatória sem filtros estatísticos (${currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena'}).`);
     showToast("Surpresinha gerada e registrada no histórico!");
   };
 
@@ -725,33 +816,70 @@ const App: React.FC = () => {
       )}
 
       {/* Top Header Principal */}
-      <header className="w-full bg-white border-b border-emerald-100 shadow-sm sticky top-0 z-40 no-print">
+      <header className="w-full bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40 no-print">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center space-x-3">
-            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-2.5 rounded-2xl shadow-md text-white">
-              <Sparkles size={26} />
+            <div className={`p-2.5 rounded-2xl shadow-md text-white transition-colors ${
+              currentLottery === 'maismilionaria' ? 'bg-gradient-to-br from-amber-600 to-yellow-600' : 'bg-gradient-to-br from-emerald-600 to-teal-700'
+            }`}>
+              {currentLottery === 'maismilionaria' ? <Clover size={26} /> : <Sparkles size={26} />}
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h1 className="text-xl sm:text-2xl font-black text-emerald-950 tracking-tight">Mega Sorte</h1>
-                <span className="hidden sm:inline-block bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase">
-                  Mega-Sena AI
-                </span>
+                <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                  {currentLottery === 'maismilionaria' ? '+Milionária Sorte' : 'Mega Sorte'}
+                </h1>
+                
+                {/* Switcher de Modalidade / Perfil */}
+                <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentLottery('megasena');
+                      setSelectedNumbers(prev => prev.filter(n => n <= 60));
+                    }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                      currentLottery === 'megasena'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-950'
+                    }`}
+                  >
+                    Mega-Sena (60)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentLottery('maismilionaria');
+                      setSelectedNumbers(prev => prev.filter(n => n <= 50));
+                    }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                      currentLottery === 'maismilionaria'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-950'
+                    }`}
+                  >
+                    +Milionária (50+6)
+                  </button>
+                </div>
               </div>
-              <p className="text-[11px] font-medium text-emerald-700/80">
-                Estatísticas de todos os 3.071 concursos oficiais da Mega-Sena
+              <p className="text-[11px] font-medium text-slate-500">
+                {currentLottery === 'maismilionaria'
+                  ? 'Base Oficial dos 401 concursos da +Milionária (Caixa Econômica Federal)'
+                  : 'Base Oficial de mais de 3.070 concursos da Mega-Sena (Caixa Econômica Federal)'}
               </p>
             </div>
           </div>
 
           {/* Navegação entre Abas e Cloud Widget */}
           <div className="flex flex-wrap items-center gap-2.5">
-            <nav className="flex items-center bg-emerald-50/80 p-1 rounded-2xl border border-emerald-200/60 shadow-inner overflow-x-auto max-w-full">
+            <nav className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-inner overflow-x-auto max-w-full">
               <button 
                 type="button"
                 onClick={() => setActiveTab('play')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                  activeTab === 'play' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'play' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <ListChecks size={15} />
@@ -761,30 +889,75 @@ const App: React.FC = () => {
               <button 
                 type="button"
                 onClick={() => setActiveTab('simulator')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                  activeTab === 'simulator' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'simulator' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <Calculator size={15} />
-                <span>SIMULADOR {history.length > 0 && `(${history.length})`}</span>
+                <span>PROBABILIDADES</span>
               </button>
 
               <button 
                 type="button"
                 onClick={() => setActiveTab('analytics')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                  activeTab === 'analytics' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'analytics' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <BarChart3 size={15} />
-                <span>ANÁLISE AVANÇADA</span>
+                <span>ESTATÍSTICAS</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setActiveTab('sequences')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'sequences' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
+                }`}
+              >
+                <ArrowRight size={15} />
+                <span>SEQUÊNCIAS</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setActiveTab('wheeling')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'wheeling' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
+                }`}
+              >
+                <Layers size={15} />
+                <span>FECHAMENTOS</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setActiveTab('comparator')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'comparator' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
+                }`}
+              >
+                <GitCompare size={15} />
+                <span>COMPARADOR</span>
               </button>
 
               <button 
                 type="button"
                 onClick={() => setActiveTab('checker')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                  activeTab === 'checker' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'checker' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <Award size={15} />
@@ -794,8 +967,10 @@ const App: React.FC = () => {
               <button 
                 type="button"
                 onClick={() => setActiveTab('history')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap ${
-                  activeTab === 'history' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-800 hover:text-emerald-950'
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'history' 
+                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <History size={15} />
@@ -862,22 +1037,63 @@ const App: React.FC = () => {
                 </button>
               )}
             </div>
+
+            {/* Botão de Controle do Cache Offline & Diagnóstico */}
+            <button
+              type="button"
+              onClick={() => setIsCacheModalOpen(true)}
+              className={`flex items-center space-x-1.5 px-3 py-2 rounded-2xl text-xs font-bold border transition-all cursor-pointer shadow-xs ${
+                isOnline
+                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                  : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+              }`}
+              title="Gerenciador de Cache Offline (100% autônomo sem internet)"
+            >
+              <Database size={13} className={isOnline ? 'text-emerald-600' : 'text-amber-600'} />
+              <span className="hidden md:inline">
+                {isOnline ? 'Cache Offline Pronto' : 'Modo Offline Ativo'}
+              </span>
+              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500 animate-ping'}`} />
+            </button>
           </div>
         </div>
       </header>
+
+      {/* Banner de Aviso de Modo Offline quando sem conexão */}
+      {!isOnline && (
+        <div className="w-full bg-amber-500 text-amber-950 px-4 py-2 text-center text-xs font-bold flex items-center justify-center gap-2 shadow-xs no-print">
+          <WifiOff size={15} />
+          <span>Modo Offline Ativo: Todas as análises, geradores, sequências e probabilidades estão rodando 100% via cache local.</span>
+          <button 
+            type="button"
+            onClick={() => setIsCacheModalOpen(true)}
+            className="underline hover:text-white font-extrabold cursor-pointer ml-1"
+          >
+            Ver Cache
+          </button>
+        </div>
+      )}
 
       {/* Conteúdo Principal */}
       <main className="w-full max-w-6xl px-3 sm:px-6 py-6 flex-grow">
         {/* Campo Permanente: Resultado do Último Sorteio Oficial Caixa Integrado */}
         <div className="mb-6">
           <LatestOfficialDrawCard
-            latestDraw={latestOfficialDraw}
+            latestDraw={activeOfficialDraw}
+            lottery={currentLottery}
             onRefresh={handleRefreshLatestDraw}
-            onUpdateDraw={handleUpdateLatestDraw}
+            onUpdateDraw={(updated) => {
+              if (currentLottery === 'maismilionaria') {
+                setLatestMaisMilionariaDraw(updated);
+                showToast(`Concurso #${updated.contestNumber} da +Milionária atualizado com sucesso!`, 'success');
+              } else {
+                handleUpdateLatestDraw(updated);
+              }
+            }}
             onSimulateProbability={() => setActiveTab('simulator')}
             onCheckMyBets={() => {
-              setReferenceDraw(latestOfficialDraw.numbers);
-              setTempRefInput(latestOfficialDraw.numbers.join(', '));
+              setReferenceDraw(activeOfficialDraw.numbers);
+              setTempRefInput(activeOfficialDraw.numbers.join(', '));
               setActiveTab('checker');
             }}
             isRefreshing={isFetchingDraw}
@@ -888,12 +1104,12 @@ const App: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Lado Esquerdo: Cartela Interativa e Diagnóstico */}
             <div className="lg:col-span-8 space-y-6">
-              <div className="bg-white rounded-3xl shadow-sm border border-emerald-100 p-4 sm:p-6 md:p-8 relative">
+              <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-4 sm:p-6 md:p-8 relative">
                 {/* Barra de Controle de Dezenas */}
-                <div className="flex flex-wrap justify-between items-center gap-3 mb-6 pb-4 border-b border-emerald-100/60">
+                <div className="flex flex-wrap justify-between items-center gap-3 mb-6 pb-4 border-b border-slate-100">
                   <div>
-                    <h2 className="text-lg sm:text-xl font-black text-emerald-950 flex items-center">
-                      Cartela Oficial Mega-Sena
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
+                      <span>Cartela Oficial {currentLottery === 'maismilionaria' ? '+Milionária (01 a 50 + Trevos)' : 'Mega-Sena (01 a 60)'}</span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
                       Toque para marcar suas dezenas ou use os geradores inteligentes
@@ -901,7 +1117,7 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="flex items-center space-x-2">
-                    <span className="text-xs font-bold text-emerald-800">Tamanho:</span>
+                    <span className="text-xs font-bold text-slate-700">Tamanho:</span>
                     <select 
                       value={betCount} 
                       onChange={(e) => {
@@ -911,9 +1127,12 @@ const App: React.FC = () => {
                           setSelectedNumbers(prev => prev.slice(0, newCount));
                         }
                       }} 
-                      className="bg-emerald-50 text-emerald-900 border border-emerald-200 text-xs font-bold py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-emerald-100/60 transition-colors"
+                      className="bg-slate-50 text-slate-900 border border-slate-200 text-xs font-bold py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-slate-100 transition-colors"
                     >
-                      {[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map(n => (
+                      {(currentLottery === 'maismilionaria' 
+                        ? [6, 7, 8, 9, 10, 11, 12] 
+                        : [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+                      ).map(n => (
                         <option key={n} value={n}>{n} dezenas</option>
                       ))}
                     </select>
@@ -921,16 +1140,20 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Status Bar / Contador de Selecionadas */}
-                <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-2xl p-3 sm:p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div className={`border rounded-2xl p-3 sm:p-4 mb-6 flex flex-wrap items-center justify-between gap-3 ${
+                  currentLottery === 'maismilionaria' ? 'bg-amber-50/70 border-amber-200/70' : 'bg-emerald-50/70 border-emerald-200/70'
+                }`}>
                   <div className="flex items-center space-x-3">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white font-black flex items-center justify-center text-sm shadow-sm">
+                    <div className={`w-9 h-9 rounded-xl text-white font-black flex items-center justify-center text-sm shadow-sm ${
+                      currentLottery === 'maismilionaria' ? 'bg-amber-600' : 'bg-emerald-600'
+                    }`}>
                       {selectedNumbers.length}
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-emerald-950">
+                      <p className="text-xs font-bold text-slate-900">
                         {selectedNumbers.length} de {betCount} dezenas selecionadas
                       </p>
-                      <p className="text-[11px] text-emerald-700">
+                      <p className={`text-[11px] ${currentLottery === 'maismilionaria' ? 'text-amber-800' : 'text-emerald-700'}`}>
                         {selectedNumbers.length < betCount 
                           ? `Faltam ${betCount - selectedNumbers.length} para completar o bilhete`
                           : "Bilhete completo pronto para salvar!"}
@@ -939,22 +1162,29 @@ const App: React.FC = () => {
                   </div>
 
                   {/* Dezenas Selecionadas Preview */}
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5 items-center">
                     {selectedNumbers.length === 0 ? (
                       <span className="text-xs text-slate-400 italic">Nenhum número marcado</span>
                     ) : (
                       selectedNumbers.map(n => (
-                        <span key={n} className="inline-flex items-center px-2 py-0.5 rounded-lg bg-emerald-700 text-white text-xs font-bold">
+                        <span key={n} className={`inline-flex items-center px-2 py-0.5 rounded-lg text-white text-xs font-bold ${
+                          currentLottery === 'maismilionaria' ? 'bg-amber-700' : 'bg-emerald-700'
+                        }`}>
                           {n.toString().padStart(2, '0')}
                         </span>
                       ))
                     )}
+                    {currentLottery === 'maismilionaria' && (
+                      <span className="ml-1 text-xs font-mono font-black text-amber-900 bg-amber-200 px-2 py-0.5 rounded-lg">
+                        Trevos: {selectedTrevos.join(', ')}
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Grade de Dezenas (60 bolas) */}
-                <div className="grid grid-cols-6 sm:grid-cols-10 gap-1.5 sm:gap-2 justify-items-center mb-6">
-                  {Array.from({ length: 60 }, (_, i) => i + 1).map((num) => (
+                {/* Grade de Dezenas */}
+                <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 sm:gap-2 justify-items-center mb-6">
+                  {Array.from({ length: currentLottery === 'maismilionaria' ? 50 : 60 }, (_, i) => i + 1).map((num) => (
                     <NumberBall 
                       key={num} 
                       num={num} 
@@ -965,6 +1195,55 @@ const App: React.FC = () => {
                     />
                   ))}
                 </div>
+
+                {/* Se for +Milionária, Seletor de 2 Trevos Oficiais */}
+                {currentLottery === 'maismilionaria' && (
+                  <div className="mb-6 p-4 rounded-2xl bg-amber-50/90 border border-amber-300">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-black text-amber-950 flex items-center gap-1 uppercase tracking-wider">
+                          <Clover size={15} className="text-amber-700" />
+                          <span>Selecione 2 Trevos Oficiais (1 a 6):</span>
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-amber-900 bg-amber-200/60 px-2 py-0.5 rounded-md border border-amber-300">
+                        Trevos Escolhidos: {selectedTrevos.map(t => `🍀 0${t}`).join(' e ')}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2.5">
+                      {[1, 2, 3, 4, 5, 6].map(t => {
+                        const isSel = selectedTrevos.includes(t);
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => {
+                              if (selectedTrevos.includes(t)) {
+                                if (selectedTrevos.length > 2) {
+                                  setSelectedTrevos(prev => prev.filter(x => x !== t));
+                                }
+                              } else {
+                                if (selectedTrevos.length < 2) {
+                                  setSelectedTrevos(prev => [...prev, t].sort((a, b) => a - b));
+                                } else {
+                                  setSelectedTrevos([selectedTrevos[1], t].sort((a, b) => a - b));
+                                }
+                              }
+                            }}
+                            className={`w-12 h-12 rounded-2xl font-mono font-black text-sm flex items-center justify-center border-2 transition-all cursor-pointer shadow-xs ${
+                              isSel
+                                ? 'bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 border-amber-600 scale-105 shadow-md'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="text-xs mr-0.5">🍀</span>{t}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Legenda de cores */}
                 <div className="flex flex-wrap items-center justify-center gap-4 text-[11px] text-slate-600 mb-6 pt-3 border-t border-slate-100">
@@ -1778,8 +2057,9 @@ const App: React.FC = () => {
         {/* Aba do Simulador de Probabilidade Real (Quadra, Quina, Sena) */}
         {activeTab === 'simulator' && (
           <ProbabilitySimulatorView
-            savedBets={history}
-            latestDraw={latestOfficialDraw}
+            savedBets={history.filter(b => !b.lottery || b.lottery === currentLottery)}
+            latestDraw={activeOfficialDraw}
+            lottery={currentLottery}
             onAddBet={(numbers, type, reasoning) => {
               saveBet(type, numbers, reasoning);
               showToast("Aposta complementar adicionada à sua carteira com sucesso!");
@@ -1790,7 +2070,46 @@ const App: React.FC = () => {
 
         {/* Aba de Análise Estatística Avançada (20 Módulos Oficiais) */}
         {activeTab === 'analytics' && (
-          <AdvancedAnalyticsView latestDraw={latestOfficialDraw} />
+          <AdvancedAnalyticsView 
+            latestDraw={activeOfficialDraw} 
+            lottery={currentLottery} 
+          />
+        )}
+
+        {/* Aba de Sequências Consecutivas */}
+        {activeTab === 'sequences' && (
+          <SequenceAnalyticsView
+            latestDraw={activeOfficialDraw}
+            lottery={currentLottery}
+          />
+        )}
+
+        {/* Aba do Simulador de Fechamentos / Desdobramentos Econômicos */}
+        {activeTab === 'wheeling' && (
+          <WheelingSimulatorView
+            latestDraw={activeOfficialDraw}
+            lottery={currentLottery}
+            onSaveBatchBets={(games, reason) => {
+              games.forEach(g => {
+                saveBet('smart_rules', g, reason);
+              });
+              showToast(`${games.length} jogos do fechamento adicionados à sua carteira com sucesso!`, 'success');
+              setActiveTab('history');
+            }}
+          />
+        )}
+
+        {/* Aba do Comparador Direto de Jogos */}
+        {activeTab === 'comparator' && (
+          <GameComparatorView
+            savedBets={history.filter(b => !b.lottery || b.lottery === currentLottery)}
+            lottery={currentLottery}
+            onAddBet={(numbers, type, reasoning) => {
+              saveBet(type, numbers, reasoning);
+              showToast("Aposta divergente anti-colisão adicionada à sua carteira com sucesso!", 'success');
+            }}
+            onGoToGenerator={() => setActiveTab('play')}
+          />
         )}
 
         {/* Aba 2: Histórico Permanente Completo */}
@@ -2171,6 +2490,14 @@ const App: React.FC = () => {
           </p>
         </div>
       </footer>
+
+      {/* Modal do Gerenciador de Cache Offline */}
+      <CacheManagerModal 
+        isOpen={isCacheModalOpen}
+        onClose={() => setIsCacheModalOpen(false)}
+        onTriggerWarmUp={handleTriggerWarmUp}
+        onClearLocalCache={handleClearLocalCache}
+      />
     </div>
   );
 };

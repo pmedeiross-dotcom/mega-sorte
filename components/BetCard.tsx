@@ -185,7 +185,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
       )}
 
       {/* Dezenas */}
-      <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-3.5">
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-3.5">
         {bet.numbers.map((n) => (
           <NumberBall 
             key={n} 
@@ -195,6 +195,21 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
             isHit={drawnNumbers?.includes(n)} 
           />
         ))}
+
+        {bet.trevos && bet.trevos.length > 0 && (
+          <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-amber-300">
+            <span className="text-[10px] font-bold text-amber-800 mr-0.5">Trevos:</span>
+            {bet.trevos.map(t => (
+              <span 
+                key={t}
+                className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 font-black text-xs font-mono flex items-center justify-center shadow-xs border border-amber-500"
+                title={`Trevo ${t}`}
+              >
+                🍀{t}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Métricas estatísticas da aposta */}

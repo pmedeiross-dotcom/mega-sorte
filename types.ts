@@ -45,9 +45,13 @@ export interface AdvancedBetMetrics {
   smartSuggestions?: string[];
 }
 
+export type LotteryType = 'megasena' | 'maismilionaria';
+
 export interface Bet {
   id: string;
   numbers: number[];
+  trevos?: number[]; // Trevos para +Milionária (1 a 6)
+  lottery?: LotteryType;
   createdAt: number;
   type: 'manual' | 'random' | 'ai' | 'smart_rules';
   reasoning?: string;
@@ -85,6 +89,7 @@ export interface OfficialDrawResult {
   contestNumber: number;
   date: string;
   numbers: number[];
+  trevos?: number[]; // Trevos para +Milionária (1 a 6)
   accumulated?: boolean;
   nextContestDate?: string;
   estimatedNextPrize?: string;
@@ -92,12 +97,29 @@ export interface OfficialDrawResult {
   winnersSena?: number;
   lastUpdated?: number;
   source?: 'api' | 'official_archive' | 'manual';
+  lottery?: LotteryType;
 }
 
 export interface ContestDraw {
   contestNumber: number;
   date: string;
   numbers: number[];
+}
+
+export interface CacheStats {
+  isOnline: boolean;
+  entriesCount: number;
+  megaSenaDrawsCount: number;
+  maisMilionariaDrawsCount: number;
+  hasCachedMegaAnalytics: boolean;
+  hasCachedMaisMilionariaAnalytics: boolean;
+  hasCachedSequences: boolean;
+  cachedBetsCount: number;
+  estimatedSizeKb: number;
+  lastUpdated: number;
+  serviceWorkerActive: boolean;
+  hitCount: number;
+  missCount: number;
 }
 
 export interface AIRootResponse {
@@ -113,3 +135,4 @@ export interface AIBatchResponse {
   }>;
   groundingUrls?: Array<{ uri: string; title: string }>;
 }
+
