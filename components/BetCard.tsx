@@ -8,17 +8,23 @@ import { jsPDF } from 'jspdf';
 interface BetCardProps {
   bet: Bet;
   drawnNumbers?: number[];
+  drawnTrevos?: number[];
   onDelete: (id: string) => void;
   onAnalyze: (id: string) => Promise<void>;
   isAnalyzing: boolean;
 }
 
-const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyze, isAnalyzing }) => {
+const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDelete, onAnalyze, isAnalyzing }) => {
   const [copied, setCopied] = useState(false);
+  const isMaisMilionaria = bet.lottery === 'maismilionaria';
 
   // Contagem de acertos se houver sorteio selecionado
   const hitsCount = drawnNumbers && drawnNumbers.length > 0
     ? bet.numbers.filter(n => drawnNumbers.includes(n)).length
+    : 0;
+
+  const trevosHitCount = isMaisMilionaria && drawnTrevos && bet.trevos
+    ? bet.trevos.filter(t => drawnTrevos.includes(t)).length
     : 0;
 
   const handleCopy = () => {
@@ -160,26 +166,54 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
       {/* Destaque de Acertos se houver conferência */}
       {drawnNumbers && drawnNumbers.length > 0 && (
         <div className="mb-3">
-          {hitsCount >= 6 ? (
-            <div className="bg-gradient-to-r from-yellow-500 to-amber-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
-              <span className="flex items-center"><Award className="mr-1.5" size={16} /> MEGA SENA! 6 ACERTOS!</span>
-              <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
-            </div>
-          ) : hitsCount === 5 ? (
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
-              <span className="flex items-center"><Award className="mr-1.5" size={16} /> QUINA! 5 ACERTOS!</span>
-              <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
-            </div>
-          ) : hitsCount === 4 ? (
-            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
-              <span className="flex items-center"><Award className="mr-1.5" size={16} /> QUADRA! 4 ACERTOS!</span>
-              <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
-            </div>
-          ) : (
-            <div className="bg-gray-50 border border-gray-200 text-gray-700 text-[11px] font-medium px-3 py-1 rounded-xl flex items-center justify-between">
-              <span>{hitsCount} {hitsCount === 1 ? 'acerto' : 'acertos'} no sorteio</span>
-              <span className="text-[10px] text-gray-400">Sem premiação</span>
-            </div>
+          {isMaisMilionaria ? (() => {
+            const prize = (() => {
+              if (hitsCount === 6 && trevosHitCount === 2) return { isWinner: true, title: '+MILIONÁRIA! FAIXA 1 (6 + 2 TREVOS)', color: 'from-yellow-500 to-amber-600' };
+              if (hitsCount === 6) return { isWinner: true, title: `FAIXA 2 (6 + ${trevosHitCount} TREVOS)`, color: 'from-amber-600 to-yellow-600' };
+              if (hitsCount === 5 && trevosHitCount === 2) return { isWinner: true, title: 'FAIXA 3 (5 + 2 TREVOS)', color: 'from-purple-600 to-indigo-600' };
+              if (hitsCount === 5) return { isWinner: true, title: `FAIXA 4 (5 + ${trevosHitCount} TREVOS)`, color: 'from-indigo-600 to-blue-600' };
+              if (hitsCount === 4 && trevosHitCount === 2) return { isWinner: true, title: 'FAIXA 5 (4 + 2 TREVOS)', color: 'from-emerald-600 to-teal-600' };
+              if (hitsCount === 4) return { isWinner: true, title: `FAIXA 6 (4 + ${trevosHitCount} TREVOS)`, color: 'from-teal-600 to-cyan-600' };
+              if (hitsCount === 3 && trevosHitCount === 2) return { isWinner: true, title: 'FAIXA 7 (3 + 2 TREVOS)', color: 'from-emerald-700 to-green-700' };
+              if (hitsCount === 3 && trevosHitCount === 1) return { isWinner: true, title: 'FAIXA 8 (3 + 1 TREVO)', color: 'from-green-600 to-emerald-600' };
+              if (hitsCount === 2 && trevosHitCount === 2) return { isWinner: true, title: 'FAIXA 9 (2 + 2 TREVOS)', color: 'from-teal-700 to-emerald-800' };
+              if (hitsCount === 2 && trevosHitCount === 1) return { isWinner: true, title: 'FAIXA 10 (2 + 1 TREVO)', color: 'from-slate-700 to-slate-800' };
+              return { isWinner: false, title: `${hitsCount} acertos e ${trevosHitCount} trevos`, color: '' };
+            })();
+
+            return prize.isWinner ? (
+              <div className={`bg-gradient-to-r ${prize.color} text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm`}>
+                <span className="flex items-center"><Award className="mr-1.5" size={16} /> {prize.title}</span>
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+              </div>
+            ) : (
+              <div className="bg-gray-50 border border-gray-200 text-gray-700 text-[11px] font-medium px-3 py-1 rounded-xl flex items-center justify-between">
+                <span>{hitsCount} {hitsCount === 1 ? 'acerto' : 'acertos'} e {trevosHitCount} {trevosHitCount === 1 ? 'trevo' : 'trevos'}</span>
+                <span className="text-[10px] text-gray-400">Sem premiação</span>
+              </div>
+            );
+          })() : (
+            hitsCount >= 6 ? (
+              <div className="bg-gradient-to-r from-yellow-500 to-amber-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                <span className="flex items-center"><Award className="mr-1.5" size={16} /> MEGA SENA! 6 ACERTOS!</span>
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+              </div>
+            ) : hitsCount === 5 ? (
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                <span className="flex items-center"><Award className="mr-1.5" size={16} /> QUINA! 5 ACERTOS!</span>
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+              </div>
+            ) : hitsCount === 4 ? (
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                <span className="flex items-center"><Award className="mr-1.5" size={16} /> QUADRA! 4 ACERTOS!</span>
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+              </div>
+            ) : (
+              <div className="bg-gray-50 border border-gray-200 text-gray-700 text-[11px] font-medium px-3 py-1 rounded-xl flex items-center justify-between">
+                <span>{hitsCount} {hitsCount === 1 ? 'acerto' : 'acertos'} no sorteio</span>
+                <span className="text-[10px] text-gray-400">Sem premiação</span>
+              </div>
+            )
           )}
         </div>
       )}
@@ -199,15 +233,22 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, onDelete, onAnalyz
         {bet.trevos && bet.trevos.length > 0 && (
           <div className="flex items-center gap-1 ml-1.5 pl-2 border-l border-amber-300">
             <span className="text-[10px] font-bold text-amber-800 mr-0.5">Trevos:</span>
-            {bet.trevos.map(t => (
-              <span 
-                key={t}
-                className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 font-black text-xs font-mono flex items-center justify-center shadow-xs border border-amber-500"
-                title={`Trevo ${t}`}
-              >
-                🍀{t}
-              </span>
-            ))}
+            {bet.trevos.map(t => {
+              const isTrevoHit = drawnTrevos?.includes(t);
+              return (
+                <span 
+                  key={t}
+                  className={`w-7 h-7 rounded-lg font-black text-xs font-mono flex items-center justify-center transition-all ${
+                    isTrevoHit
+                      ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white ring-2 ring-emerald-400 shadow-md scale-105'
+                      : 'bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 shadow-xs border border-amber-500'
+                  }`}
+                  title={isTrevoHit ? `Trevo ${t} (ACERTOU!)` : `Trevo ${t}`}
+                >
+                  🍀{t}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>

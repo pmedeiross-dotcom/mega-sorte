@@ -41,7 +41,9 @@ import {
   Clover,
   Database,
   Wifi,
-  WifiOff
+  WifiOff,
+  BrainCircuit,
+  Trophy
 } from 'lucide-react';
 import { generateLuckyNumbersWithAI, analyzeBetHistory, generateBatchLuckyNumbersWithAI } from './services/geminiService';
 import { Bet, GeneratorLogic, CalculationStrategy, OfficialDrawResult, LotteryType } from './types';
@@ -64,6 +66,8 @@ import ProbabilitySimulatorView from './components/ProbabilitySimulatorView';
 import GameComparatorView from './components/GameComparatorView';
 import SequenceAnalyticsView from './components/SequenceAnalyticsView';
 import WheelingSimulatorView from './components/WheelingSimulatorView';
+import AICoachingPanel from './components/AICoachingPanel';
+import GameRankingPanel from './components/GameRankingPanel';
 import CacheManagerModal from './components/CacheManagerModal';
 import { offlineCacheManager } from './services/offlineCacheManager';
 import { 
@@ -119,7 +123,7 @@ const App: React.FC = () => {
   const [isRuleGenerating, setIsRuleGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    'play' | 'simulator' | 'analytics' | 'sequences' | 'wheeling' | 'comparator' | 'history' | 'checker'
+    'play' | 'simulator' | 'analytics' | 'sequences' | 'wheeling' | 'comparator' | 'coaching' | 'ranking' | 'history' | 'checker'
   >('play');
   
   // Toast de feedback não intrusivo
@@ -159,10 +163,28 @@ const App: React.FC = () => {
     };
   });
 
-  // Sorteio de referência para conferência e repetição (padrão ancorado no último sorteio oficial)
-  const [referenceDraw, setReferenceDraw] = useState<number[]>(latestOfficialDraw.numbers);
+  // Sorteios de referência de conferência independentes para Mega-Sena e +Milionária
+  const [megaRefDraw, setMegaRefDraw] = useState<number[]>(latestOfficialDraw.numbers);
+  const [maisMilionariaRefDraw, setMaisMilionariaRefDraw] = useState<number[]>(latestMaisMilionariaDraw.numbers);
+  const [maisMilionariaRefTrevos, setMaisMilionariaRefTrevos] = useState<number[]>(latestMaisMilionariaDraw.trevos || [1, 2]);
+
   const [isCustomizingRef, setIsCustomizingRef] = useState(false);
   const [tempRefInput, setTempRefInput] = useState(latestOfficialDraw.numbers.join(', '));
+  const [tempRefTrevosInput, setTempRefTrevosInput] = useState((latestMaisMilionariaDraw.trevos || [1, 2]).join(', '));
+
+  const activeRefNumbers = currentLottery === 'maismilionaria' ? maisMilionariaRefDraw : megaRefDraw;
+  const activeRefTrevos = currentLottery === 'maismilionaria' ? maisMilionariaRefTrevos : undefined;
+
+  // Sincroniza inputs ao mudar de perfil de loteria
+  useEffect(() => {
+    if (currentLottery === 'maismilionaria') {
+      setTempRefInput(maisMilionariaRefDraw.join(', '));
+      setTempRefTrevosInput(maisMilionariaRefTrevos.join(', '));
+    } else {
+      setTempRefInput(megaRefDraw.join(', '));
+    }
+    setIsCustomizingRef(false);
+  }, [currentLottery, megaRefDraw, maisMilionariaRefDraw, maisMilionariaRefTrevos]);
 
   // Filtros de histórico
   const [filterType, setFilterType] = useState<string>('all');
@@ -241,20 +263,24 @@ const App: React.FC = () => {
     fetchLatestOfficialDraw().then(({ draw, isLive, message }) => {
       if (isLive) {
         setLatestOfficialDraw(draw);
-        setReferenceDraw(draw.numbers);
-        setTempRefInput(draw.numbers.join(', '));
+        setMegaRefDraw(draw.numbers);
+        if (currentLottery === 'megasena') {
+          setTempRefInput(draw.numbers.join(', '));
+        }
         showToast(message, 'info');
       }
     }).catch(() => {});
-  }, []);
+  }, [currentLottery]);
 
   const handleRefreshLatestDraw = async () => {
     setIsFetchingDraw(true);
     try {
       const { draw, isLive, message } = await fetchLatestOfficialDraw();
       setLatestOfficialDraw(draw);
-      setReferenceDraw(draw.numbers);
-      setTempRefInput(draw.numbers.join(', '));
+      setMegaRefDraw(draw.numbers);
+      if (currentLottery === 'megasena') {
+        setTempRefInput(draw.numbers.join(', '));
+      }
       showToast(message, isLive ? 'success' : 'info');
     } catch {
       showToast("Não foi possível buscar na Caixa no momento. Usando último concurso salvo.", 'info');
@@ -264,18 +290,36 @@ const App: React.FC = () => {
   };
 
   const handleUpdateLatestDraw = (updated: OfficialDrawResult) => {
-    setLatestOfficialDraw(updated);
-    saveStoredLatestOfficialDraw(updated);
-    setReferenceDraw(updated.numbers);
-    setTempRefInput(updated.numbers.join(', '));
-    showToast(`Concurso #${updated.contestNumber} salvo e ativo em todas as análises futuras!`, 'success');
+    if (currentLottery === 'maismilionaria') {
+      setLatestMaisMilionariaDraw(updated);
+      setMaisMilionariaRefDraw(updated.numbers);
+      if (updated.trevos) setMaisMilionariaRefTrevos(updated.trevos);
+      setTempRefInput(updated.numbers.join(', '));
+      if (updated.trevos) setTempRefTrevosInput(updated.trevos.join(', '));
+      showToast(`Concurso #${updated.contestNumber} da +Milionária salvo com sucesso!`, 'success');
+    } else {
+      setLatestOfficialDraw(updated);
+      saveStoredLatestOfficialDraw(updated);
+      setMegaRefDraw(updated.numbers);
+      setTempRefInput(updated.numbers.join(', '));
+      showToast(`Concurso #${updated.contestNumber} da Mega-Sena salvo com sucesso!`, 'success');
+    }
   };
 
   const handleRestoreOfficialDrawInChecker = () => {
-    setReferenceDraw(latestOfficialDraw.numbers);
-    setTempRefInput(latestOfficialDraw.numbers.join(', '));
-    setIsCustomizingRef(false);
-    showToast(`Conferência restaurada para o Último Concurso Oficial Caixa #${latestOfficialDraw.contestNumber}!`, 'success');
+    if (currentLottery === 'maismilionaria') {
+      setMaisMilionariaRefDraw(latestMaisMilionariaDraw.numbers);
+      setMaisMilionariaRefTrevos(latestMaisMilionariaDraw.trevos || [1, 2]);
+      setTempRefInput(latestMaisMilionariaDraw.numbers.join(', '));
+      setTempRefTrevosInput((latestMaisMilionariaDraw.trevos || [1, 2]).join(', '));
+      setIsCustomizingRef(false);
+      showToast(`Conferência restaurada para o Último Concurso Oficial Caixa +Milionária #${latestMaisMilionariaDraw.contestNumber}!`, 'success');
+    } else {
+      setMegaRefDraw(latestOfficialDraw.numbers);
+      setTempRefInput(latestOfficialDraw.numbers.join(', '));
+      setIsCustomizingRef(false);
+      showToast(`Conferência restaurada para o Último Concurso Oficial Caixa Mega-Sena #${latestOfficialDraw.contestNumber}!`, 'success');
+    }
   };
 
   // Registrar Service Worker e escutar status de rede
@@ -418,7 +462,7 @@ const App: React.FC = () => {
     advancedMetrics?: Bet['advancedMetrics']
   ) => {
     const { sum, sumStatus } = calculateSumData(numbers);
-    const resolvedAdvancedMetrics = advancedMetrics || buildAdvancedBetMetrics(validateGameAgainstRules(numbers, logicOptions, referenceDraw));
+    const resolvedAdvancedMetrics = advancedMetrics || buildAdvancedBetMetrics(validateGameAgainstRules(numbers, logicOptions, activeRefNumbers));
     const newBet: Bet = {
       id: Math.random().toString(36).substring(2, 11),
       numbers: [...numbers].sort((a, b) => a - b),
@@ -711,42 +755,86 @@ const App: React.FC = () => {
 
   // Atualizar sorteio de referência manual
   const handleSaveReferenceDraw = () => {
-    const parsed = tempRefInput
+    const isMais = currentLottery === 'maismilionaria';
+    const maxNum = isMais ? 50 : 60;
+
+    const parsedNums = tempRefInput
       .split(/[\s,;-]+/)
       .map(s => parseInt(s.trim(), 10))
-      .filter(n => !isNaN(n) && n >= 1 && n <= 60);
+      .filter(n => !isNaN(n) && n >= 1 && n <= maxNum);
 
-    const unique = Array.from(new Set(parsed)).sort((a: number, b: number) => a - b);
-    if (unique.length === 6) {
-      setReferenceDraw(unique);
+    const uniqueNums = Array.from(new Set(parsedNums)).sort((a: number, b: number) => a - b);
+
+    if (uniqueNums.length !== 6) {
+      showToast(`Informe exatamente 6 dezenas válidas (01 a ${maxNum}).`, 'error');
+      return;
+    }
+
+    if (isMais) {
+      const parsedTrevos = tempRefTrevosInput
+        .split(/[\s,;-]+/)
+        .map(s => parseInt(s.trim(), 10))
+        .filter(t => !isNaN(t) && t >= 1 && t <= 6);
+      const uniqueTrevos = Array.from(new Set(parsedTrevos)).sort((a: number, b: number) => a - b);
+      if (uniqueTrevos.length !== 2) {
+        showToast("Informe exatamente 2 trevos válidos (1 a 6) para a +Milionária.", 'error');
+        return;
+      }
+      setMaisMilionariaRefDraw(uniqueNums);
+      setMaisMilionariaRefTrevos(uniqueTrevos);
       setIsCustomizingRef(false);
-      showToast("Sorteio de referência atualizado com sucesso!");
+      showToast("Sorteio de referência da +Milionária atualizado com sucesso!");
     } else {
-      showToast("Informe exatamente 6 dezenas válidas (1 a 60).", 'error');
+      setMegaRefDraw(uniqueNums);
+      setIsCustomizingRef(false);
+      showToast("Sorteio de referência da Mega-Sena atualizado com sucesso!");
     }
   };
 
   // Contabilidade geral de conferência
   const checkerStats = useMemo(() => {
+    const relevantBets = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+
+    if (currentLottery === 'maismilionaria') {
+      let faixa1 = 0; // 6 + 2 trevos
+      let faixa2to4 = 0; // 6 ou 5 acertos
+      let faixa5to6 = 0; // 4 acertos
+      let faixa7to10 = 0; // 3 ou 2 acertos + trevos
+
+      relevantBets.forEach(bet => {
+        const hits = bet.numbers.filter(n => activeRefNumbers.includes(n)).length;
+        const trevosHits = (activeRefTrevos && bet.trevos) 
+          ? bet.trevos.filter(t => activeRefTrevos.includes(t)).length 
+          : 0;
+
+        if (hits === 6 && trevosHits === 2) faixa1++;
+        else if (hits === 6 || hits === 5) faixa2to4++;
+        else if (hits === 4) faixa5to6++;
+        else if ((hits === 3 && trevosHits >= 1) || (hits === 2 && trevosHits >= 1)) faixa7to10++;
+      });
+
+      return { faixa1, faixa2to4, faixa5to6, faixa7to10, total: relevantBets.length };
+    }
+
     let sena = 0;
     let quina = 0;
     let quadra = 0;
     let terno = 0;
 
-    history.forEach(bet => {
-      const hits = bet.numbers.filter(n => referenceDraw.includes(n)).length;
+    relevantBets.forEach(bet => {
+      const hits = bet.numbers.filter(n => activeRefNumbers.includes(n)).length;
       if (hits === 6) sena++;
       else if (hits === 5) quina++;
       else if (hits === 4) quadra++;
       else if (hits === 3) terno++;
     });
 
-    return { sena, quina, quadra, terno, total: history.length };
-  }, [history, referenceDraw]);
+    return { sena, quina, quadra, terno, total: relevantBets.length };
+  }, [history, currentLottery, activeRefNumbers, activeRefTrevos]);
 
-  // Histórico filtrado e ordenado
+  // Histórico filtrado e ordenado para a modalidade atual
   const filteredHistory = useMemo(() => {
-    let result = [...history];
+    let result = history.filter(b => (b.lottery || 'megasena') === currentLottery);
 
     if (filterType !== 'all') {
       result = result.filter(b => b.type === filterType);
@@ -759,9 +847,15 @@ const App: React.FC = () => {
       }
     }
 
-    if (onlyPrizes && referenceDraw.length > 0) {
+    if (onlyPrizes && activeRefNumbers.length > 0) {
       result = result.filter(b => {
-        const hits = b.numbers.filter(n => referenceDraw.includes(n)).length;
+        const hits = b.numbers.filter(n => activeRefNumbers.includes(n)).length;
+        if (currentLottery === 'maismilionaria') {
+          const tHits = (activeRefTrevos && b.trevos) 
+            ? b.trevos.filter(t => activeRefTrevos.includes(t)).length 
+            : 0;
+          return hits >= 4 || (hits === 3 && tHits >= 1) || (hits === 2 && tHits >= 1);
+        }
         return hits >= 4;
       });
     }
@@ -775,7 +869,7 @@ const App: React.FC = () => {
     });
 
     return result;
-  }, [history, filterType, searchTerm, sortOrder, onlyPrizes, referenceDraw]);
+  }, [history, filterType, searchTerm, sortOrder, onlyPrizes, activeRefNumbers]);
 
   // Alternar todas as regras
   const toggleAllRules = (enable: boolean) => {
@@ -953,6 +1047,32 @@ const App: React.FC = () => {
 
               <button 
                 type="button"
+                onClick={() => setActiveTab('coaching')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'coaching' 
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-purple-700 hover:text-purple-950 font-bold'
+                }`}
+              >
+                <BrainCircuit size={15} className="text-purple-500" />
+                <span>IA COACHING</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setActiveTab('ranking')} 
+                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'ranking' 
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'text-amber-700 hover:text-amber-950 font-bold'
+                }`}
+              >
+                <Trophy size={15} className="text-amber-500" />
+                <span>RANKING</span>
+              </button>
+
+              <button 
+                type="button"
                 onClick={() => setActiveTab('checker')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'checker' 
@@ -974,7 +1094,7 @@ const App: React.FC = () => {
                 }`}
               >
                 <History size={15} />
-                <span>HISTÓRICO ({history.length})</span>
+                <span>HISTÓRICO ({filteredHistory.length})</span>
               </button>
             </nav>
 
@@ -1092,8 +1212,15 @@ const App: React.FC = () => {
             }}
             onSimulateProbability={() => setActiveTab('simulator')}
             onCheckMyBets={() => {
-              setReferenceDraw(activeOfficialDraw.numbers);
-              setTempRefInput(activeOfficialDraw.numbers.join(', '));
+              if (currentLottery === 'maismilionaria') {
+                setMaisMilionariaRefDraw(latestMaisMilionariaDraw.numbers);
+                if (latestMaisMilionariaDraw.trevos) setMaisMilionariaRefTrevos(latestMaisMilionariaDraw.trevos);
+                setTempRefInput(latestMaisMilionariaDraw.numbers.join(', '));
+                if (latestMaisMilionariaDraw.trevos) setTempRefTrevosInput(latestMaisMilionariaDraw.trevos.join(', '));
+              } else {
+                setMegaRefDraw(latestOfficialDraw.numbers);
+                setTempRefInput(latestOfficialDraw.numbers.join(', '));
+              }
               setActiveTab('checker');
             }}
             isRefreshing={isFetchingDraw}
@@ -1189,7 +1316,7 @@ const App: React.FC = () => {
                       key={num} 
                       num={num} 
                       isSelected={selectedNumbers.includes(num)} 
-                      isHit={referenceDraw.includes(num)}
+                      isHit={activeRefNumbers.includes(num)}
                       onClick={() => toggleNumber(num)} 
                       size="md"
                     />
@@ -2319,7 +2446,8 @@ const App: React.FC = () => {
                   <BetCard 
                     key={bet.id} 
                     bet={bet} 
-                    drawnNumbers={referenceDraw}
+                    drawnNumbers={activeRefNumbers}
+                    drawnTrevos={activeRefTrevos}
                     onDelete={handleDeleteBet} 
                     onAnalyze={handleAnalyzeBet} 
                     isAnalyzing={analyzingId === bet.id} 
@@ -2330,42 +2458,81 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Aba 3: Conferidor de Apostas */}
+        {/* Aba: IA Coaching */}
+        {activeTab === 'coaching' && (
+          <AICoachingPanel 
+            history={history}
+            currentLottery={currentLottery}
+            latestDraw={activeOfficialDraw}
+            onApplyCoachingToGenerator={() => {
+              setLogicOptions(prev => ({ 
+                ...prev, 
+                repeat1to2: true, 
+                balanceEvenOdd: true, 
+                sum160to240: true, 
+                calculationStrategy: 'balanced' 
+              }));
+              showToast("Estratégia balanceada do Coach aplicada ao gerador!");
+            }}
+            onNavigateToPlay={() => setActiveTab('play')}
+          />
+        )}
+
+        {/* Aba: Ranking de Jogos */}
+        {activeTab === 'ranking' && (
+          <GameRankingPanel 
+            history={history}
+            currentLottery={currentLottery}
+            onNavigateToPlay={() => setActiveTab('play')}
+          />
+        )}
+
+        {/* Aba: Conferidor de Apostas (Totalmente compatível com Mega-Sena e +Milionária) */}
         {activeTab === 'checker' && (
           <div className="bg-white rounded-3xl shadow-sm border border-emerald-100 p-4 sm:p-6 md:p-8 space-y-6">
             <div>
-              <h2 className="text-xl sm:text-2xl font-black text-emerald-950 flex items-center space-x-2">
-                <Award size={24} className="text-emerald-600" />
-                <span>Conferidor Automático de Apostas</span>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center space-x-2">
+                <Award size={24} className={currentLottery === 'maismilionaria' ? 'text-amber-600' : 'text-emerald-600'} />
+                <span>
+                  {currentLottery === 'maismilionaria' 
+                    ? 'Conferidor Automático: +Milionária (01 a 50 + Trevos)' 
+                    : 'Conferidor Automático: Mega-Sena (01 a 60)'}
+                </span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Verifique instantaneamente todas as apostas salvas contra o resultado de um concurso da Mega-Sena.
+                {currentLottery === 'maismilionaria'
+                  ? 'Verifique instantaneamente todas as suas apostas salvas da +Milionária contra as 10 faixas oficiais de premiação da Caixa.'
+                  : 'Verifique instantaneamente todas as suas apostas salvas da Mega-Sena (Sena, Quina e Quadra).'}
               </p>
             </div>
 
-            {/* Painel do Concurso de Referência */}
-            <div className="bg-gradient-to-br from-emerald-900 to-teal-950 text-white p-5 sm:p-6 rounded-3xl shadow-md space-y-4">
+            {/* Painel do Concurso de Referência Oficial */}
+            <div className={`text-white p-5 sm:p-6 rounded-3xl shadow-md space-y-4 ${
+              currentLottery === 'maismilionaria'
+                ? 'bg-gradient-to-br from-amber-950 via-slate-900 to-yellow-950 border border-amber-800'
+                : 'bg-gradient-to-br from-emerald-900 to-teal-950 border border-emerald-800'
+            }`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center space-x-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-200">
-                    Sorteio de Referência Caixa • Concurso #{latestOfficialDraw.contestNumber} ({latestOfficialDraw.date})
+                  <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${
+                    currentLottery === 'maismilionaria' ? 'bg-amber-400' : 'bg-emerald-400'
+                  }`}></span>
+                  <span className="text-xs font-extrabold uppercase tracking-widest text-slate-200">
+                    Sorteio de Referência Caixa • Concurso #{activeOfficialDraw.contestNumber} ({activeOfficialDraw.date})
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  {JSON.stringify(referenceDraw) !== JSON.stringify(latestOfficialDraw.numbers) && (
-                    <button
-                      type="button"
-                      onClick={handleRestoreOfficialDrawInChecker}
-                      className="text-[11px] font-bold text-amber-300 hover:text-white underline cursor-pointer"
-                    >
-                      Restaurar Concurso Oficial #{latestOfficialDraw.contestNumber}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleRestoreOfficialDrawInChecker}
+                    className="text-[11px] font-bold text-amber-300 hover:text-white underline cursor-pointer"
+                  >
+                    Restaurar Concurso Oficial #{activeOfficialDraw.contestNumber}
+                  </button>
                   <button 
                     type="button"
                     onClick={() => setIsCustomizingRef(!isCustomizingRef)}
-                    className="text-[11px] font-bold text-emerald-200 hover:text-white underline cursor-pointer"
+                    className="text-[11px] font-bold text-slate-200 hover:text-white underline cursor-pointer"
                   >
                     {isCustomizingRef ? 'Cancelar Edição' : 'Digitar Outro Concurso'}
                   </button>
@@ -2373,74 +2540,138 @@ const App: React.FC = () => {
               </div>
 
               {isCustomizingRef ? (
-                <div className="bg-white/10 p-3.5 rounded-2xl space-y-2.5">
-                  <label className="text-xs font-bold text-emerald-100 block">
-                    Digite as 6 dezenas sorteadas separadas por vírgula ou espaço:
-                  </label>
-                  <div className="flex gap-2">
+                <div className="bg-white/10 p-3.5 rounded-2xl space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-100 block">
+                      Digite as 6 dezenas sorteadas (01 a {currentLottery === 'maismilionaria' ? '50' : '60'}):
+                    </label>
                     <input 
                       type="text" 
                       value={tempRefInput} 
                       onChange={(e) => setTempRefInput(e.target.value)}
-                      placeholder="Ex: 05, 12, 26, 33, 44, 58" 
-                      className="flex-1 px-3 py-2 rounded-xl bg-white text-slate-900 font-bold text-sm outline-none"
+                      placeholder={currentLottery === 'maismilionaria' ? "Ex: 05, 14, 23, 31, 42, 48" : "Ex: 05, 12, 26, 33, 44, 58"} 
+                      className="w-full px-3 py-2 rounded-xl bg-white text-slate-900 font-bold text-sm outline-none"
                     />
-                    <button 
-                      type="button"
-                      onClick={handleSaveReferenceDraw}
-                      className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-black text-xs transition-colors"
-                    >
-                      CONFERIR
-                    </button>
                   </div>
+
+                  {currentLottery === 'maismilionaria' && (
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-amber-200 block">
+                        Digite os 2 Trevos sorteados (1 a 6):
+                      </label>
+                      <input 
+                        type="text" 
+                        value={tempRefTrevosInput} 
+                        onChange={(e) => setTempRefTrevosInput(e.target.value)}
+                        placeholder="Ex: 1, 2" 
+                        className="w-full px-3 py-2 rounded-xl bg-white text-amber-950 font-bold text-sm outline-none"
+                      />
+                    </div>
+                  )}
+
+                  <button 
+                    type="button"
+                    onClick={handleSaveReferenceDraw}
+                    className={`w-full text-white px-4 py-2.5 rounded-xl font-black text-xs transition-colors cursor-pointer shadow-sm ${
+                      currentLottery === 'maismilionaria' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
+                  >
+                    CONFERIR COM ESTE RESULTADO
+                  </button>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-2 py-2">
-                  {referenceDraw.map(n => (
-                    <span 
-                      key={n} 
-                      className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 font-black flex items-center justify-center text-sm sm:text-base shadow-md border-2 border-yellow-300"
-                    >
-                      {n.toString().padStart(2, '0')}
-                    </span>
-                  ))}
+                  <div className="flex flex-wrap gap-2">
+                    {activeRefNumbers.map(n => (
+                      <span 
+                        key={n} 
+                        className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 font-black flex items-center justify-center text-sm sm:text-base shadow-md border-2 border-yellow-300"
+                      >
+                        {n.toString().padStart(2, '0')}
+                      </span>
+                    ))}
+                  </div>
+
+                  {currentLottery === 'maismilionaria' && activeRefTrevos && (
+                    <div className="flex items-center gap-1.5 pl-3 border-l border-white/20">
+                      <span className="text-xs font-bold text-amber-300 mr-0.5">Trevos:</span>
+                      {activeRefTrevos.map(t => (
+                        <span 
+                          key={t}
+                          className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-black flex items-center justify-center text-sm sm:text-base shadow-md border-2 border-emerald-300 font-mono"
+                        >
+                          🍀{t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
-              <p className="text-[11px] text-emerald-200/80">
-                Estas 6 dezenas também orientam a regra de repetição de 1–2 dezenas no gerador estatístico.
+              <p className="text-[11px] text-slate-300">
+                {currentLottery === 'maismilionaria'
+                  ? 'Resultado oficial da +Milionária usado para confrontar seus bilhetes e identificar prêmios nas 10 faixas oficiais.'
+                  : 'Resultado oficial da Mega-Sena usado para confrontar seus bilhetes e orientar a regra de repetição de 1–2 dezenas.'}
               </p>
             </div>
 
-            {/* Placar de Premiações */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/70 text-center">
-                <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Sena (6 acertos)</span>
-                <p className="text-2xl sm:text-3xl font-black text-amber-900 mt-1">{checkerStats.sena}</p>
-                <span className="text-[10px] text-amber-700 font-medium">Prêmio Máximo</span>
-              </div>
+            {/* Placar de Premiações adaptativo */}
+            {currentLottery === 'maismilionaria' ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50/80 text-center">
+                  <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Faixa 1 (6 + 2 Trevos)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-amber-900 mt-1">{(checkerStats as any).faixa1 || 0}</p>
+                  <span className="text-[10px] text-amber-700 font-bold">Prêmio Máximo</span>
+                </div>
 
-              <div className="p-4 rounded-2xl border border-blue-200 bg-blue-50/70 text-center">
-                <span className="text-[10px] font-black uppercase text-blue-800 tracking-wider">Quina (5 acertos)</span>
-                <p className="text-2xl sm:text-3xl font-black text-blue-900 mt-1">{checkerStats.quina}</p>
-                <span className="text-[10px] text-blue-700 font-medium">2º Faixa</span>
-              </div>
+                <div className="p-4 rounded-2xl border border-indigo-200 bg-indigo-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-indigo-800 tracking-wider">Faixas 2 a 4 (Quinas)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-indigo-900 mt-1">{(checkerStats as any).faixa2to4 || 0}</p>
+                  <span className="text-[10px] text-indigo-700 font-medium">6 ou 5 Acertos</span>
+                </div>
 
-              <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-center">
-                <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">Quadra (4 acertos)</span>
-                <p className="text-2xl sm:text-3xl font-black text-emerald-900 mt-1">{checkerStats.quadra}</p>
-                <span className="text-[10px] text-emerald-700 font-medium">3º Faixa</span>
-              </div>
+                <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">Faixas 5 e 6 (Quadras)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-emerald-900 mt-1">{(checkerStats as any).faixa5to6 || 0}</p>
+                  <span className="text-[10px] text-emerald-700 font-medium">4 Acertos</span>
+                </div>
 
-              <div className="p-4 rounded-2xl border border-purple-200 bg-purple-50/70 text-center">
-                <span className="text-[10px] font-black uppercase text-purple-800 tracking-wider">Terno (3 acertos)</span>
-                <p className="text-2xl sm:text-3xl font-black text-purple-900 mt-1">{checkerStats.terno}</p>
-                <span className="text-[10px] text-purple-700 font-medium">Sem prêmio na Mega</span>
+                <div className="p-4 rounded-2xl border border-teal-200 bg-teal-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-teal-800 tracking-wider">Faixas 7 a 10 (+Trevos)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-teal-900 mt-1">{(checkerStats as any).faixa7to10 || 0}</p>
+                  <span className="text-[10px] text-teal-700 font-medium">3 ou 2 + Trevos</span>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Sena (6 acertos)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-amber-900 mt-1">{(checkerStats as any).sena || 0}</p>
+                  <span className="text-[10px] text-amber-700 font-medium">Prêmio Máximo</span>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-blue-200 bg-blue-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-blue-800 tracking-wider">Quina (5 acertos)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-blue-900 mt-1">{(checkerStats as any).quina || 0}</p>
+                  <span className="text-[10px] text-blue-700 font-medium">2º Faixa</span>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-emerald-800 tracking-wider">Quadra (4 acertos)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-emerald-900 mt-1">{(checkerStats as any).quadra || 0}</p>
+                  <span className="text-[10px] text-emerald-700 font-medium">3º Faixa</span>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-purple-200 bg-purple-50/70 text-center">
+                  <span className="text-[10px] font-black uppercase text-purple-800 tracking-wider">Terno (3 acertos)</span>
+                  <p className="text-2xl sm:text-3xl font-black text-purple-900 mt-1">{(checkerStats as any).terno || 0}</p>
+                  <span className="text-[10px] text-purple-700 font-medium">Sem prêmio na Mega</span>
+                </div>
+              </div>
+            )}
 
             {/* Gráfico de Visualização de Dados (Recharts) */}
-            <FrequencyChart history={history} referenceDraw={referenceDraw} />
+            <FrequencyChart history={filteredHistory} referenceDraw={activeRefNumbers} />
 
             {/* Toggle de Apenas Premiadas */}
             <div className="flex items-center justify-between pt-2">
@@ -2451,11 +2682,11 @@ const App: React.FC = () => {
                   onChange={(e) => setOnlyPrizes(e.target.checked)} 
                   className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
                 />
-                <span>Exibir somente jogos premiados (&ge; 4 acertos)</span>
+                <span>Exibir somente jogos premiados</span>
               </label>
 
               <span className="text-xs text-slate-500">
-                Total de apostas no histórico: {history.length}
+                Apostas conferidas nesta modalidade: {filteredHistory.length}
               </span>
             </div>
 
@@ -2465,7 +2696,8 @@ const App: React.FC = () => {
                 <BetCard 
                   key={bet.id} 
                   bet={bet} 
-                  drawnNumbers={referenceDraw}
+                  drawnNumbers={activeRefNumbers}
+                  drawnTrevos={activeRefTrevos}
                   onDelete={(id) => {
                     setHistory(h => h.filter(x => x.id !== id));
                     showToast("Aposta excluída.");
