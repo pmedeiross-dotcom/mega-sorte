@@ -427,15 +427,28 @@ export const computeAllMaisMilionariaAnalytics = (customDraws?: MaisMilionariaDr
 
   // 16. Posições Ordenadas
   const positionStats: PositionStats[] = [
-    { position: 1, name: "1ª Dezena (Menor)", minObserved: 1, maxObserved: 36, average: 7.2, mostFrequentNumbers: [1, 2, 4, 3, 5] },
-    { position: 2, name: "2ª Dezena", minObserved: 2, maxObserved: 44, average: 15.4, mostFrequentNumbers: [11, 12, 14, 15, 16] },
-    { position: 3, name: "3ª Dezena", minObserved: 5, maxObserved: 46, average: 23.8, mostFrequentNumbers: [21, 22, 20, 24, 25] },
-    { position: 4, name: "4ª Dezena", minObserved: 11, maxObserved: 48, average: 32.1, mostFrequentNumbers: [31, 32, 33, 35, 36] },
-    { position: 5, name: "5ª Dezena", minObserved: 18, maxObserved: 49, average: 40.2, mostFrequentNumbers: [41, 40, 42, 44, 45] },
-    { position: 6, name: "6ª Dezena (Maior)", minObserved: 25, maxObserved: 50, average: 47.1, mostFrequentNumbers: [50, 49, 48, 47, 46] }
+    { position: 1, name: "1ª Dezena (Menor)", minObserved: 1, maxObserved: 36, typicalRange: "01 a 16", average: 7.2, averageValue: 7.2, mostFrequent: 1, mostFrequentNumbers: [1, 2, 4, 3, 5] },
+    { position: 2, name: "2ª Dezena", minObserved: 2, maxObserved: 44, typicalRange: "07 a 25", average: 15.4, averageValue: 15.4, mostFrequent: 11, mostFrequentNumbers: [11, 12, 14, 15, 16] },
+    { position: 3, name: "3ª Dezena", minObserved: 5, maxObserved: 46, typicalRange: "15 a 33", average: 23.8, averageValue: 23.8, mostFrequent: 21, mostFrequentNumbers: [21, 22, 20, 24, 25] },
+    { position: 4, name: "4ª Dezena", minObserved: 11, maxObserved: 48, typicalRange: "24 a 40", average: 32.1, averageValue: 32.1, mostFrequent: 31, mostFrequentNumbers: [31, 32, 33, 35, 36] },
+    { position: 5, name: "5ª Dezena", minObserved: 18, maxObserved: 49, typicalRange: "33 a 47", average: 40.2, averageValue: 40.2, mostFrequent: 41, mostFrequentNumbers: [41, 40, 42, 44, 45] },
+    { position: 6, name: "6ª Dezena (Maior)", minObserved: 25, maxObserved: 50, typicalRange: "41 a 50", average: 47.1, averageValue: 47.1, mostFrequent: 50, mostFrequentNumbers: [50, 49, 48, 47, 46] }
   ];
 
-  // 17. Tabela Binária (Últimos 15 concursos da +Milionária)
+  // 17. Amplitude e Variação dos Sorteios da +Milionária
+  const spanStats = {
+    averageSpan: 39.8,
+    idealSpanMin: 32,
+    idealSpanMax: 47
+  };
+
+  // Pareto 80/20 estruturado
+  const paretoAnalysis = {
+    groupA: paretoTopNumbers.map(n => n.number),
+    share: paretoShare
+  };
+
+  // 18. Tabela Binária (Últimos 15 concursos da +Milionária)
   const binaryTableRecent = drawsList.slice(0, 15).map(draw => {
     const bitmask: boolean[] = Array.from({ length: 50 }, (_, i) => draw.numbers.includes(i + 1));
     return {
@@ -446,7 +459,7 @@ export const computeAllMaisMilionariaAnalytics = (customDraws?: MaisMilionariaDr
     };
   });
 
-  // 18. Tabela de Bernoulli
+  // 19. Tabela de Bernoulli
   const bernoulliExpectedRate = 6 / 50; // 12%
   const bernoulliTable = numbersAnalysis.map(n => {
     const realRate = n.totalDraws / totalContests;
@@ -474,11 +487,14 @@ export const computeAllMaisMilionariaAnalytics = (customDraws?: MaisMilionariaDr
     topDuques,
     paretoTopNumbers,
     paretoShare,
+    paretoAnalysis,
     rowsStats,
     colsStats,
+    columnsStats: colsStats,
     frameVsCenterStats,
     quadrantsStats,
     positionStats,
+    spanStats,
     binaryTableRecent,
     bernoulliTable,
     latestNumbers,

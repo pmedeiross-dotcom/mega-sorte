@@ -13,7 +13,7 @@ import { TOTAL_CONTESTS_COUNT, MegaDraw } from '../utils/megaSenaContestsData';
 import { TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT, MaisMilionariaDraw } from '../utils/maisMilionariaContestsData';
 import { CacheStats, OfficialDrawResult, LotteryType } from '../types';
 
-const CACHE_VERSION = 'v2_offline_hub';
+const CACHE_VERSION = 'v3_offline_hub';
 const PREFIX = `ms_cache_${CACHE_VERSION}_`;
 
 const KEYS = {

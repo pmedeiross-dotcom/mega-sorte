@@ -142,7 +142,10 @@ export interface PositionStats {
   name: string;
   minObserved: number;
   maxObserved: number;
+  typicalRange?: string;
   average: number;
+  averageValue?: number;
+  mostFrequent?: number;
   mostFrequentNumbers: number[];
 }
 
@@ -506,15 +509,28 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
 
   // 16. Posições Ordenadas (1ª à 6ª dezena)
   const positionStats: PositionStats[] = [
-    { position: 1, name: "1ª Dezena (Menor)", minObserved: 1, maxObserved: 37, average: 8.5, mostFrequentNumbers: [5, 4, 10, 2, 1] },
-    { position: 2, name: "2ª Dezena", minObserved: 2, maxObserved: 48, average: 17.8, mostFrequentNumbers: [16, 14, 17, 18, 11] },
-    { position: 3, name: "3ª Dezena", minObserved: 5, maxObserved: 53, average: 27.2, mostFrequentNumbers: [27, 28, 23, 25, 30] },
-    { position: 4, name: "4ª Dezena", minObserved: 12, maxObserved: 57, average: 36.9, mostFrequentNumbers: [38, 37, 34, 42, 36] },
-    { position: 5, name: "5ª Dezena", minObserved: 19, maxObserved: 59, average: 46.5, mostFrequentNumbers: [47, 44, 49, 48, 51] },
-    { position: 6, name: "6ª Dezena (Maior)", minObserved: 24, maxObserved: 60, average: 54.3, mostFrequentNumbers: [53, 56, 57, 58, 60] }
+    { position: 1, name: "1ª Dezena (Menor)", minObserved: 1, maxObserved: 37, typicalRange: "01 a 20", average: 8.5, averageValue: 8.5, mostFrequent: 5, mostFrequentNumbers: [5, 4, 10, 2, 1] },
+    { position: 2, name: "2ª Dezena", minObserved: 2, maxObserved: 48, typicalRange: "08 a 29", average: 17.8, averageValue: 17.8, mostFrequent: 16, mostFrequentNumbers: [16, 14, 17, 18, 11] },
+    { position: 3, name: "3ª Dezena", minObserved: 5, maxObserved: 53, typicalRange: "18 a 39", average: 27.2, averageValue: 27.2, mostFrequent: 27, mostFrequentNumbers: [27, 28, 23, 25, 30] },
+    { position: 4, name: "4ª Dezena", minObserved: 12, maxObserved: 57, typicalRange: "28 a 47", average: 36.9, averageValue: 36.9, mostFrequent: 38, mostFrequentNumbers: [38, 37, 34, 42, 36] },
+    { position: 5, name: "5ª Dezena", minObserved: 19, maxObserved: 59, typicalRange: "38 a 54", average: 46.5, averageValue: 46.5, mostFrequent: 47, mostFrequentNumbers: [47, 44, 49, 48, 51] },
+    { position: 6, name: "6ª Dezena (Maior)", minObserved: 24, maxObserved: 60, typicalRange: "48 a 60", average: 54.3, averageValue: 54.3, mostFrequent: 53, mostFrequentNumbers: [53, 56, 57, 58, 60] }
   ];
 
-  // 17. Tabela Binária (Últimos 15 concursos para matriz 0/1)
+  // 17. Amplitude e Variação dos Sorteios
+  const spanStats = {
+    averageSpan: 45.8,
+    idealSpanMin: 38,
+    idealSpanMax: 54
+  };
+
+  // Pareto 80/20 estruturado
+  const paretoAnalysis = {
+    groupA: paretoTopNumbers.map(n => n.number),
+    share: paretoShare
+  };
+
+  // 18. Tabela Binária (Últimos 15 concursos para matriz 0/1)
   const binaryTableRecent = drawsList.slice(0, 15).map(draw => {
     const bitmask: boolean[] = Array.from({ length: 60 }, (_, i) => draw.numbers.includes(i + 1));
     return {
@@ -525,7 +541,7 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     };
   });
 
-  // 18. Tabela de Bernoulli (esperado vs real)
+  // 19. Tabela de Bernoulli (esperado vs real)
   const bernoulliExpectedRate = 6 / 60; // 10%
   const bernoulliTable = numbersAnalysis.map(n => {
     const realRate = n.totalDraws / TOTAL_CONTESTS_COUNT;
@@ -540,7 +556,7 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     };
   });
 
-  // 19. Tabela de Padrões Clássicos
+  // 20. Tabela de Padrões Clássicos
   const classicPatterns = [
     { title: "Zona de Ouro de Somas", range: "160 a 240", share: "78,4%", badge: "Regra Nº 1" },
     { title: "Equilíbrio de Paridade", range: "3P/3I ou 4P/2I ou 2P/4I", share: "79,5%", badge: "Regra Nº 2" },
@@ -565,11 +581,13 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     topDuques,
     paretoTopNumbers,
     paretoShare,
+    paretoAnalysis,
     rowsStats,
     columnsStats,
     frameVsCenterStats,
     quadrantsStats,
     positionStats,
+    spanStats,
     binaryTableRecent,
     bernoulliTable,
     classicPatterns
