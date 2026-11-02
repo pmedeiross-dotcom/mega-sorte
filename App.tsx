@@ -2208,6 +2208,11 @@ const App: React.FC = () => {
           <SequenceAnalyticsView
             latestDraw={activeOfficialDraw}
             lottery={currentLottery}
+            onAddBet={(numbers, type, reasoning) => {
+              saveBet(type as any, numbers, reasoning);
+              showToast("Aposta validada salva na sua carteira com sucesso!", 'success');
+              setActiveTab('history');
+            }}
           />
         )}
 
