@@ -49,18 +49,23 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
   onAddBet
 }) => {
   const activeLottery: LotteryType = (lottery as LotteryType) || 'megasena';
+  const isLotofacil = activeLottery === 'lotofacil';
   const isMaisMilionaria = activeLottery === 'maismilionaria';
-  const maxNumber = isMaisMilionaria ? 50 : 60;
+  const maxNumber = isLotofacil ? 25 : (isMaisMilionaria ? 50 : 60);
   
   // Dados do último sorteio oficial de referência
   const officialRefNumbers = useMemo(() => {
-    if (latestDraw?.numbers && latestDraw.numbers.length >= 6) {
+    if (latestDraw?.numbers && latestDraw.numbers.length >= (isLotofacil ? 15 : 6)) {
       return [...latestDraw.numbers].sort((a, b) => a - b);
     }
-    return isMaisMilionaria ? [1, 15, 23, 34, 45, 49] : [5, 14, 28, 33, 42, 59];
-  }, [latestDraw, isMaisMilionaria]);
+    return isLotofacil
+      ? [1, 2, 5, 6, 9, 10, 11, 13, 14, 17, 18, 20, 21, 23, 25]
+      : isMaisMilionaria
+      ? [1, 15, 23, 34, 45, 49]
+      : [5, 14, 28, 33, 42, 59];
+  }, [latestDraw, isLotofacil, isMaisMilionaria]);
 
-  const officialContestNumber = latestDraw?.contestNumber || (isMaisMilionaria ? 401 : 3071);
+  const officialContestNumber = latestDraw?.contestNumber || (isLotofacil ? 3350 : (isMaisMilionaria ? 401 : 3071));
 
   const analytics = useMemo(() => {
     return offlineCacheManager.getOrComputeSequenceAnalytics(activeLottery, latestDraw);
@@ -68,6 +73,9 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
 
   // Números padrão iniciais com 1 repetida do último sorteio e 1 dupla consecutiva (Padrão Ouro)
   const defaultInitialGame = useMemo(() => {
+    if (isLotofacil) {
+      return officialRefNumbers.slice(0, 15);
+    }
     const refFirst = officialRefNumbers[0] || 14;
     // Tenta montar [refFirst, refFirst+1, ...] sem ultrapassar maxNumber
     const pairSecond = refFirst < maxNumber ? refFirst + 1 : refFirst - 1;
@@ -82,7 +90,7 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
       }
     }
     return set.sort((a, b) => a - b);
-  }, [officialRefNumbers, maxNumber]);
+  }, [officialRefNumbers, maxNumber, isLotofacil]);
 
   // Estado interativo do testador rápido
   const [selectedTestBalls, setSelectedTestBalls] = useState<number[]>(defaultInitialGame);
@@ -129,6 +137,10 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
 
   // Preset com 1 dezena do último sorteio e 1 dupla consecutiva (Padrão Ouro ideal)
   const loadGoldenPreset = () => {
+    if (isLotofacil) {
+      loadPreset([1, 2, 3, 5, 8, 10, 11, 13, 14, 17, 18, 20, 21, 23, 25]);
+      return;
+    }
     const refSample = officialRefNumbers[1] || 14;
     const neighbor = refSample < maxNumber ? refSample + 1 : refSample - 1;
     const base = [refSample, neighbor, 5, 23, 38, 45].filter(n => n >= 1 && n <= maxNumber);
@@ -138,8 +150,10 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
 
   // Preset com regras violadas para teste de diagnóstico
   const loadViolatedPreset = () => {
-    // 3 números consecutivos + 6 pares + soma extrema
-    const violated = isMaisMilionaria 
+    // Regras violadas para teste
+    const violated = isLotofacil
+      ? [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 1, 3, 5] // 12 pares (extremo), soma atípica
+      : isMaisMilionaria 
       ? [2, 4, 6, 8, 10, 12] // 6 pares, soma 42 (abaixo de 120), 0 repetidas
       : [2, 4, 6, 8, 10, 12]; // 6 pares, soma 42 (muito abaixo de 160)
     loadPreset(violated);
@@ -209,17 +223,32 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
     let repBadge = 'Aprovado (Padrão Ouro)';
     let repRecommendation: string | undefined;
 
-    if (repeatedCount === 1 || repeatedCount === 2) {
-      repStatus = 'passed';
-      repBadge = '✅ Padrão Ouro Caixa';
-    } else if (repeatedCount === 0) {
-      repStatus = 'warning';
-      repBadge = '⚠️ Sem Repetição do Último Concurso';
-      repRecommendation = `Considere incluir ao menos 1 dezena do último concurso (${officialRefNumbers.map(n => n.toString().padStart(2, '0')).join(', ')}). Em 60,5% dos sorteios há repetição.`;
+    if (isLotofacil) {
+      if (repeatedCount >= 8 && repeatedCount <= 10) {
+        repStatus = 'passed';
+        repBadge = '✅ Padrão Ouro Lotofácil (8 a 10 repetidas)';
+      } else if (repeatedCount === 7 || repeatedCount === 11) {
+        repStatus = 'warning';
+        repBadge = '⚠️ Desvio Leve (7 ou 11 repetidas)';
+        repRecommendation = `Seu jogo repete ${repeatedCount} dezenas do concurso anterior. A zona de ouro histórica é de 8 a 10 repetidas (79,5% dos concursos).`;
+      } else {
+        repStatus = 'violated';
+        repBadge = '❌ Fora da Zona de Ouro (<7 ou >11 repetidas)';
+        repRecommendation = `Você selecionou ${repeatedCount} dezenas repetidas. Na Lotofácil, 8 a 10 repetidas ocorrem em quase 80% dos concursos.`;
+      }
     } else {
-      repStatus = 'violated';
-      repBadge = '❌ Regra Violada (Excesso)';
-      repRecommendation = `Você selecionou ${repeatedCount} dezenas do concurso anterior. Apenas 3,5% dos sorteios da história tiveram 3 ou mais repetidas. Reduza para 1 ou 2.`;
+      if (repeatedCount === 1 || repeatedCount === 2) {
+        repStatus = 'passed';
+        repBadge = '✅ Padrão Ouro Caixa';
+      } else if (repeatedCount === 0) {
+        repStatus = 'warning';
+        repBadge = '⚠️ Sem Repetição do Último Concurso';
+        repRecommendation = `Considere incluir ao menos 1 dezena do último concurso (${officialRefNumbers.map(n => n.toString().padStart(2, '0')).join(', ')}). Em 60,5% dos sorteios há repetição.`;
+      } else {
+        repStatus = 'violated';
+        repBadge = '❌ Regra Violada (Excesso)';
+        repRecommendation = `Você selecionou ${repeatedCount} dezenas do concurso anterior. Apenas 3,5% dos sorteios da história tiveram 3 ou mais repetidas. Reduza para 1 ou 2.`;
+      }
     }
 
     rules.push({
@@ -244,20 +273,35 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
     let seqBadge = '✅ Padrão Ouro';
     let seqRecommendation: string | undefined;
 
-    if (hasTripletOrMore) {
-      seqStatus = 'violated';
-      seqBadge = '❌ Regra Violada (Trinca Rara)';
-      seqRecommendation = `Detectada sequência de 3 ou mais dezenas consecutivas. Esse padrão ocorre em menos de 3,5% dos sorteios históricos da Caixa. Separe essas dezenas.`;
-    } else if (hasDoublePair) {
-      seqStatus = 'warning';
-      seqBadge = '⚠️ 2 Duplas (Frequência Média)';
-      seqRecommendation = 'Duas duplas consecutivas ocorrem em ~17,3% dos concursos. Um padrão com apenas 1 dupla simples (43,2%) possui maior densidade estatística.';
-    } else if (hasSinglePair) {
-      seqStatus = 'passed';
-      seqBadge = '✅ Padrão Ouro (1 Dupla)';
+    if (isLotofacil) {
+      if (maxConsecutiveLength >= 6) {
+        seqStatus = 'violated';
+        seqBadge = '❌ Sequência Excessiva (≥ 6)';
+        seqRecommendation = 'Sequências de 6 ou mais números seguidos são raríssimas na Lotofácil. Tente intercalar com números espaçados.';
+      } else if (maxConsecutiveLength === 5) {
+        seqStatus = 'warning';
+        seqBadge = '⚠️ Sequência Longa (5 seguidos)';
+        seqRecommendation = 'Sequência de 5 dezenas consecutivas possui ocorrência moderada. O ideal são duplas e trincas intercaladas.';
+      } else {
+        seqStatus = 'passed';
+        seqBadge = '✅ Padrão Equilibrado Lotofácil';
+      }
     } else {
-      seqStatus = 'passed';
-      seqBadge = '✅ Dezenas Isoladas (35,6%)';
+      if (hasTripletOrMore) {
+        seqStatus = 'violated';
+        seqBadge = '❌ Regra Violada (Trinca Rara)';
+        seqRecommendation = `Detectada sequência de 3 ou mais dezenas consecutivas. Esse padrão ocorre em menos de 3,5% dos sorteios históricos da Caixa. Separe essas dezenas.`;
+      } else if (hasDoublePair) {
+        seqStatus = 'warning';
+        seqBadge = '⚠️ 2 Duplas (Frequência Média)';
+        seqRecommendation = 'Duas duplas consecutivas ocorrem em ~17,3% dos concursos. Um padrão com apenas 1 dupla simples (43,2%) possui maior densidade estatística.';
+      } else if (hasSinglePair) {
+        seqStatus = 'passed';
+        seqBadge = '✅ Padrão Ouro (1 Dupla)';
+      } else {
+        seqStatus = 'passed';
+        seqBadge = '✅ Dezenas Isoladas (35,6%)';
+      }
     }
 
     const allConsecutiveNumbers = consecutiveGroups.flat();
@@ -265,7 +309,9 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
     rules.push({
       id: 'rule_sequences',
       title: 'Sequências Numéricas Consecutivas (Vizinhança)',
-      targetDescription: 'Ideal histórico: Nenhuma sequência (35,6%) ou 1 Dupla consecutiva (43,2%)',
+      targetDescription: isLotofacil 
+        ? 'Ideal histórico: Duplas e trincas intercaladas (máx 4 seguidas)'
+        : 'Ideal histórico: Nenhuma sequência (35,6%) ou 1 Dupla consecutiva (43,2%)',
       status: seqStatus,
       badgeLabel: seqBadge,
       observedText: consecutiveGroups.length === 0 
@@ -275,7 +321,9 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
       foundNumbersLabel: consecutiveGroups.length > 0 
         ? `Grupos consecutivos encontrados: ${consecutiveGroups.map(g => `[${g.map(n => n.toString().padStart(2, '0')).join(' - ')}]`).join(' e ')}`
         : 'Nenhuma sequência consecutiva encontrada (todas dispersas).',
-      historicalContext: 'Mais de 78,8% dos concursos oficiais contêm no máximo 1 dupla de dezenas seguidas. Trincas consecutivas (como 22-23-24) representam menos de 3,5% da história.',
+      historicalContext: isLotofacil
+        ? 'Com 15 dezenas em 25, praticamente 100% dos concursos possuem duplas ou trincas seguidas. Sequências de 6 ou mais dezenas representam menos de 2% da história.'
+        : 'Mais de 78,8% dos concursos oficiais contêm no máximo 1 dupla de dezenas seguidas. Trincas consecutivas (como 22-23-24) representam menos de 3,5% da história.',
       recommendation: seqRecommendation
     });
 
@@ -284,29 +332,48 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
     let evenOddBadge = '✅ Equilibrado';
     let evenOddRecommendation: string | undefined;
 
-    if (isEvenOddExtreme) {
-      evenOddStatus = 'violated';
-      evenOddBadge = '❌ Regra Violada (Extremo)';
-      evenOddRecommendation = `Seu jogo contém ${evenCount} pares e ${oddCount} ímpares. Jogos 100% pares ou 100% ímpares ocorrem em menos de 1,5% de toda a história oficial da Caixa.`;
-    } else if (!isEvenOddBalanced) {
-      evenOddStatus = 'warning';
-      evenOddBadge = '⚠️ Assimétrico (5P/1I ou 1P/5I)';
-      evenOddRecommendation = `Essa configuração ocorre em apenas ~8,8% dos concursos. O equilíbrio ideal é 3P/3I, 4P/2I ou 2P/4I (79,5% dos resultados).`;
+    if (isLotofacil) {
+      if ((evenCount === 7 && oddCount === 8) || (evenCount === 8 && oddCount === 7)) {
+        evenOddStatus = 'passed';
+        evenOddBadge = '✅ Equilíbrio Ouro (7P/8I ou 8P/7I - 78%)';
+      } else if ((evenCount === 6 && oddCount === 9) || (evenCount === 9 && oddCount === 6)) {
+        evenOddStatus = 'warning';
+        evenOddBadge = '⚠️ Leve Assimetria (6P/9I ou 9P/6I)';
+        evenOddRecommendation = `Essa proporção ocorre em ~18% dos concursos. O ápice estatístico é 7P/8I ou 8P/7I (78% da história).`;
+      } else {
+        evenOddStatus = 'violated';
+        evenOddBadge = '❌ Assimetria Extrema';
+        evenOddRecommendation = `Proporções com menos de 6 ou mais de 9 pares representam menos de 4% de todos os resultados da Lotofácil.`;
+      }
     } else {
-      evenOddStatus = 'passed';
-      evenOddBadge = '✅ Padrão Equilibrado (79,5%)';
+      if (isEvenOddExtreme) {
+        evenOddStatus = 'violated';
+        evenOddBadge = '❌ Regra Violada (Extremo)';
+        evenOddRecommendation = `Seu jogo contém ${evenCount} pares e ${oddCount} ímpares. Jogos 100% pares ou 100% ímpares ocorrem em menos de 1,5% de toda a história oficial da Caixa.`;
+      } else if (!isEvenOddBalanced) {
+        evenOddStatus = 'warning';
+        evenOddBadge = '⚠️ Assimétrico (5P/1I ou 1P/5I)';
+        evenOddRecommendation = `Essa configuração ocorre em apenas ~8,8% dos concursos. O equilíbrio ideal é 3P/3I, 4P/2I ou 2P/4I (79,5% dos resultados).`;
+      } else {
+        evenOddStatus = 'passed';
+        evenOddBadge = '✅ Padrão Equilibrado (79,5%)';
+      }
     }
 
     rules.push({
       id: 'rule_even_odd',
       title: 'Distribuição de Paridade (Pares e Ímpares)',
-      targetDescription: 'Ideal histórico: 3P/3I, 4P/2I ou 2P/4I (79,5% dos sorteios)',
+      targetDescription: isLotofacil 
+        ? 'Ideal histórico: 7P/8I ou 8P/7I (78% dos concursos)'
+        : 'Ideal histórico: 3P/3I, 4P/2I ou 2P/4I (79,5% dos sorteios)',
       status: evenOddStatus,
       badgeLabel: evenOddBadge,
       observedText: `${evenCount} Dezenas Pares e ${oddCount} Dezenas Ímpares.`,
       foundNumbers: currentNumbers,
       foundNumbersLabel: `Pares: [${evenNumbers.map(n => n.toString().padStart(2, '0')).join(', ') || 'Nenhum'}] | Ímpares: [${oddNumbers.map(n => n.toString().padStart(2, '0')).join(', ') || 'Nenhum'}]`,
-      historicalContext: 'Em quase 80% dos concursos a premiação divide-se equilibradamente entre 2, 3 ou 4 dezenas pares.',
+      historicalContext: isLotofacil
+        ? 'Em 78% dos concursos da Lotofácil ocorrem exatamente 7 pares e 8 ímpares ou 8 pares e 7 ímpares.'
+        : 'Em quase 80% dos concursos a premiação divide-se equilibradamente entre 2, 3 ou 4 dezenas pares.',
       recommendation: evenOddRecommendation
     });
 
@@ -326,39 +393,75 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
     rules.push({
       id: 'rule_sum',
       title: `Zona de Ouro da Soma (${idealSumMin} a ${idealSumMax})`,
-      targetDescription: `Ideal histórico: Soma total entre ${idealSumMin} e ${idealSumMax} (78,4% dos prêmios)`,
+      targetDescription: `Ideal histórico: Soma total entre ${idealSumMin} e ${idealSumMax} (${isLotofacil ? '75,8%' : '78,4%'} dos prêmios)`,
       status: sumStatus,
       badgeLabel: sumBadge,
       observedText: `Soma total calculada: ${sum} pontos.`,
       foundNumbers: currentNumbers,
       foundNumbersLabel: `Cálculo da soma: ${currentNumbers.map(n => n.toString().padStart(2, '0')).join(' + ')} = ${sum}`,
-      historicalContext: `Mais de 78% das combinações sorteadas pela Caixa ficam na faixa central entre ${idealSumMin} e ${idealSumMax}, evitando os extremos.`,
+      historicalContext: `Mais de 75% das combinações sorteadas pela Caixa ficam na faixa central entre ${idealSumMin} e ${idealSumMax}, evitando os extremos.`,
       recommendation: sumRecommendation
     });
 
-    // REGRA 5: Dispersão Espacial por Quadrantes
-    let quadStatus: 'passed' | 'warning' | 'violated' = 'passed';
-    let quadBadge = '✅ Bem Disperso';
-    let quadRecommendation: string | undefined;
+    // REGRA 5: Dispersão Espacial (Moldura/Centro na Lotofácil ou Quadrantes na Mega/Milionária)
+    if (isLotofacil) {
+      const LOTOFACIL_FRAME = [1, 2, 3, 4, 5, 6, 10, 11, 15, 16, 20, 21, 22, 23, 24, 25];
+      const molduraNums = currentNumbers.filter(n => LOTOFACIL_FRAME.includes(n));
+      const centroNums = currentNumbers.filter(n => !LOTOFACIL_FRAME.includes(n));
+      const mCount = molduraNums.length;
+      let frameStatus: 'passed' | 'warning' | 'violated' = 'passed';
+      let frameBadge = '✅ Moldura Ouro (9 a 11)';
+      let frameRec: string | undefined;
 
-    if (quadrantsUsed <= 2) {
-      quadStatus = 'violated';
-      quadBadge = '❌ Concentrado em ≤ 2 Quadrantes';
-      quadRecommendation = `Suas dezenas estão concentradas em apenas ${quadrantsUsed} quadrantes do volante. Distribua seus números por pelo menos 3 quadrantes.`;
+      if (mCount >= 9 && mCount <= 11) {
+        frameStatus = 'passed';
+        frameBadge = '✅ Moldura Ouro (9 a 11 - 81%)';
+      } else if (mCount === 8 || mCount === 12) {
+        frameStatus = 'warning';
+        frameBadge = '⚠️ Desvio Leve (8 ou 12)';
+        frameRec = `Seu jogo tem ${mCount} dezenas na moldura. A faixa mais premiada é de 9 a 11 (81% dos concursos).`;
+      } else {
+        frameStatus = 'violated';
+        frameBadge = '❌ Fora da Proporção (<8 ou >12)';
+        frameRec = `Jogos com menos de 8 ou mais de 12 dezenas na moldura são raros (<5%). Ajuste para 9 a 11.`;
+      }
+
+      rules.push({
+        id: 'rule_frame',
+        title: 'Distribuição Moldura (16 dezenas) vs Centro (9 dezenas)',
+        targetDescription: 'Ideal histórico: 9 a 11 dezenas na moldura (81% dos concursos)',
+        status: frameStatus,
+        badgeLabel: frameBadge,
+        observedText: `${mCount} na moldura e ${centroNums.length} no centro.`,
+        foundNumbers: currentNumbers,
+        foundNumbersLabel: `Moldura: [${molduraNums.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Centro: [${centroNums.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}]`,
+        historicalContext: 'A moldura externa possui 16 dezenas e o miolo interno possui 9. Em 81% dos concursos, entre 9 e 11 números sorteados estão na moldura.',
+        recommendation: frameRec
+      });
+    } else {
+      let quadStatus: 'passed' | 'warning' | 'violated' = 'passed';
+      let quadBadge = '✅ Bem Disperso';
+      let quadRecommendation: string | undefined;
+
+      if (quadrantsUsed <= 2) {
+        quadStatus = 'violated';
+        quadBadge = '❌ Concentrado em ≤ 2 Quadrantes';
+        quadRecommendation = `Suas dezenas estão concentradas em apenas ${quadrantsUsed} quadrantes do volante. Distribua seus números por pelo menos 3 quadrantes.`;
+      }
+
+      rules.push({
+        id: 'rule_quadrants',
+        title: 'Dispersão Espacial por Quadrantes do Volante',
+        targetDescription: 'Ideal histórico: Dezenas distribuídas em 3 ou 4 quadrantes',
+        status: quadStatus,
+        badgeLabel: quadBadge,
+        observedText: `Dezenas ocupam ${quadrantsUsed} de 4 quadrantes do volante oficial.`,
+        foundNumbers: currentNumbers,
+        foundNumbersLabel: `Q1: [${q1Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Q2: [${q2Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Q3: [${q3Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Q4: [${q4Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}]`,
+        historicalContext: 'Menos de 6% dos concursos têm todas as 6 dezenas concentradas em apenas 1 ou 2 quadrantes do cartão.',
+        recommendation: quadRecommendation
+      });
     }
-
-    rules.push({
-      id: 'rule_quadrants',
-      title: 'Dispersão Espacial por Quadrantes do Volante',
-      targetDescription: 'Ideal histórico: Dezenas distribuídas em 3 ou 4 quadrantes',
-      status: quadStatus,
-      badgeLabel: quadBadge,
-      observedText: `Dezenas ocupam ${quadrantsUsed} de 4 quadrantes do volante oficial.`,
-      foundNumbers: currentNumbers,
-      foundNumbersLabel: `Q1: [${q1Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Q2: [${q2Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Q3: [${q3Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}] | Q4: [${q4Numbers.map(n => n.toString().padStart(2, '0')).join(', ') || '-'}]`,
-      historicalContext: 'Menos de 6% dos concursos têm todas as 6 dezenas concentradas em apenas 1 ou 2 quadrantes do cartão.',
-      recommendation: quadRecommendation
-    });
 
     // Cálculos de Conformidade Geral
     const passedCount = rules.filter(r => r.status === 'passed').length;
@@ -397,15 +500,17 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
       violatedCount,
       score,
       overallRating,
-      isCompleteGame: count >= 6
+      isCompleteGame: count >= (isLotofacil ? 15 : 6)
     };
-  }, [selectedTestBalls, officialRefNumbers, officialContestNumber, isMaisMilionaria]);
+  }, [selectedTestBalls, officialRefNumbers, officialContestNumber, isMaisMilionaria, isLotofacil]);
 
   return (
     <div className="space-y-6">
       {/* Banner Principal com Contexto Oficial */}
       <div className={`text-white rounded-3xl p-5 sm:p-7 shadow-lg relative overflow-hidden border ${
-        isMaisMilionaria 
+        isLotofacil
+          ? 'bg-gradient-to-r from-purple-950 via-fuchsia-950 to-indigo-950 border-purple-800'
+          : isMaisMilionaria 
           ? 'bg-gradient-to-r from-amber-950 via-yellow-950 to-slate-900 border-amber-800' 
           : 'bg-gradient-to-r from-slate-900 via-teal-950 to-emerald-950 border-emerald-800'
       }`}>
@@ -413,7 +518,9 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
-                isMaisMilionaria 
+                isLotofacil
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-400/30'
+                  : isMaisMilionaria 
                   ? 'bg-amber-500/20 text-amber-300 border-amber-400/30' 
                   : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
               }`}>
@@ -424,7 +531,7 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1 tracking-tight flex items-center gap-2">
-              <ArrowRight size={24} className={isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400'} />
+              <ArrowRight size={24} className={isLotofacil ? 'text-purple-400' : (isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400')} />
               <span>Painel Histórico de Sequências &amp; Testador de Conformidade</span>
             </h2>
             <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-relaxed">

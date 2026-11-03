@@ -45,7 +45,7 @@ export interface AdvancedBetMetrics {
   smartSuggestions?: string[];
 }
 
-export type LotteryType = 'megasena' | 'maismilionaria';
+export type LotteryType = 'megasena' | 'maismilionaria' | 'lotofacil';
 
 export interface Bet {
   id: string;

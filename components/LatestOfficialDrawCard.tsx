@@ -36,6 +36,7 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
   isRefreshing = false
 }) => {
   const isMaisMilionaria = lottery === 'maismilionaria';
+  const isLotofacil = lottery === 'lotofacil';
   const [isEditing, setIsEditing] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -46,7 +47,7 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
   const [editTrevosStr, setEditTrevosStr] = useState((latestDraw.trevos || [1, 2]).join(', '));
   const [editAccumulated, setEditAccumulated] = useState(latestDraw.accumulated ?? true);
   const [editPrize, setEditPrize] = useState(
-    latestDraw.estimatedNextPrize || (isMaisMilionaria ? "R$ 10.000.000,00" : "R$ 38.000.000,00")
+    latestDraw.estimatedNextPrize || (isLotofacil ? "R$ 1.700.000,00" : (isMaisMilionaria ? "R$ 10.000.000,00" : "R$ 38.000.000,00"))
   );
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -54,7 +55,9 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
   const sum = latestDraw.numbers.reduce((acc, curr) => acc + curr, 0);
   const evenCount = latestDraw.numbers.filter(n => n % 2 === 0).length;
   const oddCount = latestDraw.numbers.length - evenCount;
-  const isGoldZone = isMaisMilionaria ? (sum >= 120 && sum <= 185) : (sum >= 160 && sum <= 240);
+  const isGoldZone = isLotofacil 
+    ? (sum >= 180 && sum <= 220)
+    : (isMaisMilionaria ? (sum >= 120 && sum <= 185) : (sum >= 160 && sum <= 240));
 
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,15 +69,16 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
       return;
     }
 
-    const maxLimit = isMaisMilionaria ? 50 : 60;
+    const maxLimit = isLotofacil ? 25 : (isMaisMilionaria ? 50 : 60);
+    const expectedCount = isLotofacil ? 15 : 6;
     const rawNums = editNumbersStr
       .split(/[\s,;-]+/)
       .map(s => parseInt(s.trim(), 10))
       .filter(n => !isNaN(n));
 
     const uniqueNums: number[] = Array.from(new Set<number>(rawNums));
-    if (uniqueNums.length !== 6) {
-      setEditError(`Informe exatamente 6 dezenas distintas entre 01 e ${maxLimit}.`);
+    if (uniqueNums.length !== expectedCount) {
+      setEditError(`Informe exatamente ${expectedCount} dezenas distintas entre 01 e ${maxLimit}.`);
       return;
     }
 
@@ -106,7 +110,7 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
       trevos: parsedTrevos,
       accumulated: editAccumulated,
       estimatedNextPrize: editPrize.trim() || undefined,
-      prizeSena: editAccumulated ? "Acumulado" : (isMaisMilionaria ? "Faixa Principal Premiada" : "Sena Premiada"),
+      prizeSena: editAccumulated ? "Acumulado" : (isLotofacil ? "15 Acertos Premiado" : (isMaisMilionaria ? "Faixa Principal Premiada" : "Sena Premiada")),
       source: 'manual',
       lastUpdated: Date.now(),
       lottery
@@ -118,47 +122,53 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
 
   return (
     <div className={`text-white rounded-3xl p-5 sm:p-6 shadow-xl relative overflow-hidden transition-all duration-300 border-2 ${
-      isMaisMilionaria 
-        ? 'bg-gradient-to-br from-slate-900 via-amber-950 to-slate-900 border-amber-500/40' 
-        : 'bg-gradient-to-br from-slate-900 via-emerald-950 to-slate-900 border-emerald-500/30'
+      isLotofacil
+        ? 'bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 border-purple-500/40'
+        : isMaisMilionaria 
+          ? 'bg-gradient-to-br from-slate-900 via-amber-950 to-slate-900 border-amber-500/40' 
+          : 'bg-gradient-to-br from-slate-900 via-emerald-950 to-slate-900 border-emerald-500/30'
     }`}>
       {/* Luz ambiente de fundo */}
       <div className={`absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 rounded-full blur-3xl pointer-events-none ${
-        isMaisMilionaria ? 'bg-amber-500/15' : 'bg-emerald-500/10'
+        isLotofacil ? 'bg-purple-500/15' : (isMaisMilionaria ? 'bg-amber-500/15' : 'bg-emerald-500/10')
       }`}></div>
       <div className={`absolute bottom-0 left-10 -mb-10 w-48 h-48 rounded-full blur-2xl pointer-events-none ${
-        isMaisMilionaria ? 'bg-yellow-500/10' : 'bg-teal-500/10'
+        isLotofacil ? 'bg-fuchsia-500/10' : (isMaisMilionaria ? 'bg-yellow-500/10' : 'bg-teal-500/10')
       }`}></div>
 
       <div className="relative z-10 space-y-4">
         {/* Barra superior com Identificação e Ações Rápidas */}
         <div className={`flex flex-wrap items-center justify-between gap-3 border-b pb-3 ${
-          isMaisMilionaria ? 'border-amber-500/20' : 'border-emerald-500/20'
+          isLotofacil ? 'border-purple-500/20' : (isMaisMilionaria ? 'border-amber-500/20' : 'border-emerald-500/20')
         }`}>
           <div className="flex items-center gap-2.5">
             <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shadow-inner border ${
-              isMaisMilionaria 
-                ? 'bg-amber-500/20 border-amber-400/40 text-amber-400' 
-                : 'bg-emerald-500/20 border-emerald-400/40 text-emerald-400'
+              isLotofacil
+                ? 'bg-purple-500/20 border-purple-400/40 text-purple-300'
+                : isMaisMilionaria 
+                  ? 'bg-amber-500/20 border-amber-400/40 text-amber-400' 
+                  : 'bg-emerald-500/20 border-emerald-400/40 text-emerald-400'
             }`}>
               {isMaisMilionaria ? <Clover className="w-5 h-5" /> : <Trophy className="w-5 h-5" />}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-black uppercase tracking-widest ${
-                  isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400'
+                  isLotofacil ? 'text-purple-400' : (isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400')
                 }`}>
                   Último Sorteio Oficial Caixa
                 </span>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                  isMaisMilionaria
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  isLotofacil
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                    : isMaisMilionaria
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${
-                    isMaisMilionaria ? 'bg-amber-400' : 'bg-emerald-400'
+                    isLotofacil ? 'bg-purple-400' : (isMaisMilionaria ? 'bg-amber-400' : 'bg-emerald-400')
                   }`}></span>
-                  {isMaisMilionaria ? '+Milionária' : 'Mega-Sena'}
+                  {isLotofacil ? 'Lotofácil' : (isMaisMilionaria ? '+Milionária' : 'Mega-Sena')}
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">
@@ -179,9 +189,11 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
               disabled={isRefreshing}
               title="Sincronizar concurso oficial da Caixa"
               className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-xs ${
-                isMaisMilionaria 
-                  ? 'bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border-amber-500/40' 
-                  : 'bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border-emerald-500/40'
+                isLotofacil
+                  ? 'bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border-purple-500/40'
+                  : isMaisMilionaria 
+                    ? 'bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border-amber-500/40' 
+                    : 'bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border-emerald-500/40'
               }`}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -197,7 +209,7 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                   setEditTrevosStr(latestDraw.trevos.join(', '));
                 }
                 setEditAccumulated(latestDraw.accumulated ?? true);
-                setEditPrize(latestDraw.estimatedNextPrize || (isMaisMilionaria ? "R$ 10.000.000,00" : "R$ 38.000.000,00"));
+                setEditPrize(latestDraw.estimatedNextPrize || (isLotofacil ? "R$ 1.700.000,00" : (isMaisMilionaria ? "R$ 10.000.000,00" : "R$ 38.000.000,00")));
                 setIsEditing(!isEditing);
               }}
               title="Ajustar o concurso manualmente"
@@ -212,9 +224,11 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                 onClick={onSimulateProbability}
                 title="Simular a probabilidade real de acerto"
                 className={`px-3 py-1.5 rounded-xl text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-md active:scale-[0.98] ${
-                  isMaisMilionaria 
-                    ? 'bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300' 
-                    : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400'
+                  isLotofacil
+                    ? 'bg-gradient-to-r from-purple-400 to-fuchsia-400 hover:from-purple-300 hover:to-fuchsia-300'
+                    : isMaisMilionaria 
+                      ? 'bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300' 
+                      : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400'
                 }`}
               >
                 <Calculator className="w-3.5 h-3.5 text-slate-950" />
@@ -227,9 +241,11 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                 onClick={onCheckMyBets}
                 title="Conferir minhas apostas salvas contra este concurso"
                 className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs ${
-                  isMaisMilionaria 
-                    ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-400/40' 
-                    : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-400/40'
+                  isLotofacil
+                    ? 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border-purple-400/40'
+                    : isMaisMilionaria 
+                      ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-400/40' 
+                      : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-400/40'
                 }`}
               >
                 <Award className="w-3.5 h-3.5" />
@@ -386,10 +402,12 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                   key={num}
                   className="relative group transition-transform hover:scale-110 duration-200"
                 >
-                  <div className={`w-11 h-11 sm:w-13 sm:h-13 rounded-2xl text-white font-black text-base sm:text-lg flex items-center justify-center shadow-lg border-2 font-mono tracking-tight ${
-                    isMaisMilionaria 
-                      ? 'bg-gradient-to-br from-amber-500 via-amber-600 to-yellow-800 border-amber-300/40 shadow-amber-950/50' 
-                      : 'bg-gradient-to-br from-emerald-400 via-emerald-600 to-teal-800 border-emerald-300/40 shadow-emerald-900/40'
+                  <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-2xl text-white font-black text-sm sm:text-base flex items-center justify-center shadow-lg border-2 font-mono tracking-tight ${
+                    isLotofacil
+                      ? 'bg-gradient-to-br from-purple-500 via-fuchsia-600 to-purple-800 border-purple-300/40 shadow-purple-950/50'
+                      : isMaisMilionaria 
+                        ? 'bg-gradient-to-br from-amber-500 via-amber-600 to-yellow-800 border-amber-300/40 shadow-amber-950/50' 
+                        : 'bg-gradient-to-br from-emerald-400 via-emerald-600 to-teal-800 border-emerald-300/40 shadow-emerald-900/40'
                   }`}>
                     {num.toString().padStart(2, '0')}
                   </div>
@@ -420,9 +438,9 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
           <div className="bg-slate-900/80 border border-slate-700/60 rounded-2xl p-3 sm:p-3.5 flex sm:flex-col justify-between items-center sm:items-end w-full lg:w-auto text-right">
             <div>
               <span className={`text-[10px] uppercase font-bold block ${
-                isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400'
+                isLotofacil ? 'text-purple-400' : (isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400')
               }`}>
-                {latestDraw.accumulated ? "Situação do Prêmio" : (isMaisMilionaria ? "Faixa Principal" : "Prêmio da Sena")}
+                {latestDraw.accumulated ? "Situação do Prêmio" : (isLotofacil ? "15 Acertos" : (isMaisMilionaria ? "Faixa Principal" : "Prêmio da Sena"))}
               </span>
               <span className="text-base sm:text-lg font-black text-white">
                 {latestDraw.accumulated ? "Acumulou!" : (latestDraw.prizeSena || "Premiado")}
@@ -449,7 +467,9 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                 <span className={`text-[9px] px-1.5 py-0.2 rounded-sm font-bold ${
                   isGoldZone ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
                 }`}>
-                  {isGoldZone ? (isMaisMilionaria ? 'Faixa Ouro (120-185)' : 'Faixa Ouro (160-240)') : 'Fora da Média'}
+                  {isGoldZone 
+                    ? (isLotofacil ? 'Faixa Ouro (180-220)' : (isMaisMilionaria ? 'Faixa Ouro (120-185)' : 'Faixa Ouro (160-240)')) 
+                    : 'Fora da Média'}
                 </span>
               </div>
             </div>

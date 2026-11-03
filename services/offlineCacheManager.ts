@@ -11,6 +11,7 @@ import { computeAllMaisMilionariaAnalytics } from '../utils/maisMilionariaAdvanc
 import { computeSequenceAnalytics, SequenceAnalysisResult } from '../utils/sequenceAnalytics';
 import { TOTAL_CONTESTS_COUNT, MegaDraw } from '../utils/megaSenaContestsData';
 import { TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT, MaisMilionariaDraw } from '../utils/maisMilionariaContestsData';
+import { LotofacilDraw } from '../utils/lotofacilContestsData';
 import { CacheStats, OfficialDrawResult, LotteryType } from '../types';
 
 const CACHE_VERSION = 'v3_offline_hub';
@@ -21,6 +22,7 @@ const KEYS = {
   MAIS_ANALYTICS: `${PREFIX}maismilionaria_analytics`,
   SEQ_MEGA: `${PREFIX}seq_megasena`,
   SEQ_MAIS: `${PREFIX}seq_maismilionaria`,
+  SEQ_LOTO: `${PREFIX}seq_lotofacil`,
   STATS_META: `${PREFIX}meta_stats`,
   OFFLINE_BETS_BACKUP: `${PREFIX}bets_backup`
 };
@@ -271,7 +273,8 @@ class OfflineCacheManager {
    */
   public async warmOfflineCache(
     megaDraws?: MegaDraw[],
-    maisDraws?: MaisMilionariaDraw[]
+    maisDraws?: MaisMilionariaDraw[],
+    lotoDraws?: LotofacilDraw[]
   ): Promise<void> {
     if (this.isWarming) return;
     this.isWarming = true;
@@ -287,6 +290,11 @@ class OfflineCacheManager {
       if (maisDraws && maisDraws.length > 0) {
         this.getOrComputeMaisMilionariaAnalytics(maisDraws, false);
         this.getOrComputeSequenceAnalytics('maismilionaria');
+      }
+
+      // 3. Lotofácil
+      if (lotoDraws && lotoDraws.length > 0) {
+        this.getOrComputeSequenceAnalytics('lotofacil');
       }
     } catch (err) {
       console.warn('[OfflineCache] Erro durante o aquecimento de cache:', err);

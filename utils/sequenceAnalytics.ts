@@ -7,6 +7,7 @@
 
 import { MEGA_SENA_OFFICIAL_DRAWS } from './megaSenaContestsData';
 import { MAIS_MILIONARIA_OFFICIAL_DRAWS } from './maisMilionariaContestsData';
+import { RECENT_LOTOFACIL_DRAWS } from './lotofacilContestsData';
 import { LotteryType, OfficialDrawResult } from '../types';
 
 export interface SequencePatternStat {
@@ -75,8 +76,11 @@ export function computeSequenceAnalytics(
   lottery: LotteryType = 'megasena',
   latestDraw?: OfficialDrawResult
 ): SequenceAnalysisResult {
+  const isLotofacil = lottery === 'lotofacil';
   const isMaisMilionaria = lottery === 'maismilionaria';
-  const baseDraws = isMaisMilionaria
+  const baseDraws = isLotofacil
+    ? RECENT_LOTOFACIL_DRAWS.map(d => ({ contest: d.contest, numbers: d.numbers }))
+    : isMaisMilionaria
     ? MAIS_MILIONARIA_OFFICIAL_DRAWS.map(d => ({ contest: d.contest, numbers: d.numbers }))
     : MEGA_SENA_OFFICIAL_DRAWS.map(d => ({ contest: d.contest, numbers: d.numbers }));
 
@@ -208,7 +212,9 @@ export function computeSequenceAnalytics(
       lastContestSeen: p.lastContest
     }));
 
-  const goldenRule = isMaisMilionaria
+  const goldenRule = isLotofacil
+    ? "Na Lotofácil (15 de 25), 100% dos concursos possuem sequências de dezenas consecutivas (média de 3 a 4 blocos de sequências). A regra de ouro é evitar sequências gigantes de 6 ou mais números seguidos!"
+    : isMaisMilionaria
     ? "Em cerca de 94% dos concursos da +Milionária, ocorrem no máximo 1 dupla consecutiva. Evite bilhetes com trincas ou 3 números vizinhos!"
     : "Em mais de 92% dos sorteios da Mega-Sena, o resultado possui NO MÁXIMO 1 dupla consecutiva (ou nenhuma). Jogos com trincas (ex: 12-13-14) ou quadras representam menos de 2% dos concursos da história!";
 

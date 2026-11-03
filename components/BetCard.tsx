@@ -17,6 +17,7 @@ interface BetCardProps {
 const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDelete, onAnalyze, isAnalyzing }) => {
   const [copied, setCopied] = useState(false);
   const isMaisMilionaria = bet.lottery === 'maismilionaria';
+  const isLotofacil = bet.lottery === 'lotofacil';
 
   // Contagem de acertos se houver sorteio selecionado
   const hitsCount = drawnNumbers && drawnNumbers.length > 0
@@ -35,9 +36,10 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
   };
 
   const handleShare = () => {
-    const text = `Aposta Mega-Sena: ${bet.numbers.map(n => n.toString().padStart(2, '0')).join(' - ')} (Soma: ${bet.sum}). Gerado no Mega Sorte!`;
+    const title = isLotofacil ? 'Minha Aposta Lotofácil' : isMaisMilionaria ? 'Minha Aposta +Milionária' : 'Minha Aposta Mega-Sena';
+    const text = `Aposta ${isLotofacil ? 'Lotofácil' : isMaisMilionaria ? '+Milionária' : 'Mega-Sena'}: ${bet.numbers.map(n => n.toString().padStart(2, '0')).join(' - ')} (Soma: ${bet.sum}). Gerado no Mega Sorte!`;
     if (navigator.share) {
-      navigator.share({ title: 'Minha Aposta da Mega-Sena', text }).catch(console.error);
+      navigator.share({ title, text }).catch(console.error);
     } else {
       handleCopy();
     }
@@ -46,10 +48,11 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
   const downloadPDF = () => {
     const doc = new jsPDF();
     const date = new Date(bet.createdAt).toLocaleDateString('pt-BR');
+    const lotTitle = isLotofacil ? 'Lotofácil' : isMaisMilionaria ? '+Milionária' : 'Mega-Sena';
     
     doc.setFontSize(22);
-    doc.setTextColor(32, 152, 105);
-    doc.text('Mega Sorte - Cartão de Jogo', 20, 20);
+    doc.setTextColor(isLotofacil ? 147 : 32, isLotofacil ? 0 : 152, isLotofacil ? 137 : 105);
+    doc.text(`${lotTitle} Sorte - Cartão de Jogo`, 20, 20);
     
     doc.setFontSize(11);
     doc.setTextColor(100);
@@ -73,7 +76,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
       doc.text(splitReason, 20, 99);
     }
     
-    doc.save(`aposta-mega-sena-${bet.id}.pdf`);
+    doc.save(`aposta-${isLotofacil ? 'lotofacil' : isMaisMilionaria ? 'maismilionaria' : 'mega-sena'}-${bet.id}.pdf`);
   };
 
   const getSumBadge = () => {
@@ -88,7 +91,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
   const getTypeBadge = () => {
     switch(bet.type) {
       case 'ai': return { color: 'bg-purple-100 text-purple-800 border-purple-200', label: 'IA Estatística' };
-      case 'smart_rules': return { color: 'bg-emerald-100 text-emerald-800 border-emerald-200', label: 'Regras Rápidas' };
+      case 'smart_rules': return { color: isLotofacil ? 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200' : 'bg-emerald-100 text-emerald-800 border-emerald-200', label: 'Regras Rápidas' };
       case 'random': return { color: 'bg-blue-100 text-blue-800 border-blue-200', label: 'Surpresinha' };
       default: return { color: 'bg-slate-100 text-slate-800 border-slate-200', label: 'Manual' };
     }
@@ -103,17 +106,30 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
 
   return (
     <div className={`bg-white rounded-2xl shadow-sm border p-4 sm:p-5 mb-4 hover:shadow-md transition-all flex flex-col h-full ${
-      hitsCount >= 4 ? 'border-amber-400 ring-2 ring-amber-300/40 bg-gradient-to-b from-amber-50/40 to-white' : 'border-emerald-100'
+      (isLotofacil && hitsCount >= 11) || (!isLotofacil && hitsCount >= 4)
+        ? 'border-amber-400 ring-2 ring-amber-300/40 bg-gradient-to-b from-amber-50/40 to-white' 
+        : isLotofacil 
+        ? 'border-purple-200' 
+        : 'border-emerald-100'
     }`}>
       {/* Cabeçalho do Card */}
       <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
         <div className="flex items-center space-x-2 text-emerald-700">
-          <Calendar size={13} className="text-emerald-500" />
+          <Calendar size={13} className={isLotofacil ? 'text-purple-500' : 'text-emerald-500'} />
           <span className="text-[11px] font-semibold">
             {new Date(bet.createdAt).toLocaleDateString('pt-BR')}
           </span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${typeBadge.color}`}>
             {typeBadge.label}
+          </span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+            isLotofacil 
+              ? 'bg-purple-100 text-purple-900 border-purple-300' 
+              : isMaisMilionaria 
+              ? 'bg-amber-100 text-amber-900 border-amber-300' 
+              : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+          }`}>
+            {isLotofacil ? 'Lotofácil' : isMaisMilionaria ? '+Milionária' : 'Mega-Sena'}
           </span>
           {bet.isCloudSynced && (
             <span 
@@ -131,7 +147,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
           <button 
             type="button" 
             onClick={handleCopy} 
-            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors" 
+            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" 
             title="Copiar dezenas"
           >
             {copied ? <Check size={16} className="text-emerald-600" /> : <Copy size={16} />}
@@ -139,7 +155,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
           <button 
             type="button" 
             onClick={downloadPDF} 
-            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors" 
+            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" 
             title="Baixar PDF"
           >
             <FileDown size={16} />
@@ -147,7 +163,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
           <button 
             type="button" 
             onClick={handleShare} 
-            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors" 
+            className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" 
             title="Compartilhar"
           >
             <Share2 size={16} />
@@ -155,7 +171,7 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
           <button 
             type="button" 
             onClick={() => onDelete(bet.id)} 
-            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" 
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer" 
             title="Excluir aposta"
           >
             <Trash2 size={16} />
@@ -166,7 +182,54 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
       {/* Destaque de Acertos se houver conferência */}
       {drawnNumbers && drawnNumbers.length > 0 && (
         <div className="mb-3">
-          {isMaisMilionaria ? (() => {
+          {isLotofacil ? (() => {
+            if (hitsCount === 15) {
+              return (
+                <div className="bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm animate-pulse">
+                  <span className="flex items-center"><Award className="mr-1.5" size={16} /> 🏆 15 ACERTOS! PRÊMIO MÁXIMO DA LOTOFÁCIL!</span>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+                </div>
+              );
+            }
+            if (hitsCount === 14) {
+              return (
+                <div className="bg-gradient-to-r from-fuchsia-600 to-pink-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                  <span className="flex items-center"><Award className="mr-1.5" size={16} /> ✨ 14 ACERTOS NA LOTOFÁCIL!</span>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+                </div>
+              );
+            }
+            if (hitsCount === 13) {
+              return (
+                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                  <span className="flex items-center"><Award className="mr-1.5" size={16} /> 🎉 13 ACERTOS (R$ 30,00 FIXO)</span>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+                </div>
+              );
+            }
+            if (hitsCount === 12) {
+              return (
+                <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                  <span className="flex items-center"><Award className="mr-1.5" size={16} /> ⭐ 12 ACERTOS (R$ 12,00 FIXO)</span>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+                </div>
+              );
+            }
+            if (hitsCount === 11) {
+              return (
+                <div className="bg-gradient-to-r from-teal-600 to-cyan-700 text-white font-black text-xs px-3 py-1.5 rounded-xl flex items-center justify-between shadow-sm">
+                  <span className="flex items-center"><Award className="mr-1.5" size={16} /> 🟢 11 ACERTOS (R$ 6,00 FIXO)</span>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md">PREMIADO</span>
+                </div>
+              );
+            }
+            return (
+              <div className="bg-gray-50 border border-gray-200 text-gray-700 text-[11px] font-medium px-3 py-1 rounded-xl flex items-center justify-between">
+                <span>{hitsCount} acertos no sorteio</span>
+                <span className="text-[10px] text-gray-400">Sem premiação (mínimo 11)</span>
+              </div>
+            );
+          })() : isMaisMilionaria ? (() => {
             const prize = (() => {
               if (hitsCount === 6 && trevosHitCount === 2) return { isWinner: true, title: '+MILIONÁRIA! FAIXA 1 (6 + 2 TREVOS)', color: 'from-yellow-500 to-amber-600' };
               if (hitsCount === 6) return { isWinner: true, title: `FAIXA 2 (6 + ${trevosHitCount} TREVOS)`, color: 'from-amber-600 to-yellow-600' };

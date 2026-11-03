@@ -57,6 +57,15 @@ import { generateMaisMilionariaGameWithRules } from './utils/maisMilionariaRules
 import { LATEST_MAIS_MILIONARIA_DRAW } from './utils/maisMilionariaContestsData';
 import { buildDrawsListWithLatest } from './utils/megaSenaAdvancedAnalytics';
 import { buildMaisMilionariaDrawsListWithLatest } from './utils/maisMilionariaAdvancedAnalytics';
+import { LATEST_LOTOFACIL_DRAW, buildLotofacilDrawsListWithLatest } from './utils/lotofacilContestsData';
+import { 
+  validateLotofacilBet, 
+  generateLotofacilWithRules, 
+  autoOptimizeLotofacilGame,
+  LOTOFACIL_FRAME,
+  LOTOFACIL_CENTER 
+} from './utils/lotofacilRules';
+import { LOTOFACIL_FREQUENCY_DATA } from './utils/lotofacilOfficialStats';
 import NumberBall from './components/NumberBall';
 import BetCard from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
@@ -109,9 +118,24 @@ const App: React.FC = () => {
     source: 'official_archive',
     lottery: 'maismilionaria'
   }));
+
+  const [latestLotofacilDraw, setLatestLotofacilDraw] = useState<OfficialDrawResult>(() => ({
+    contestNumber: LATEST_LOTOFACIL_DRAW.contest,
+    date: LATEST_LOTOFACIL_DRAW.date,
+    numbers: LATEST_LOTOFACIL_DRAW.numbers,
+    accumulated: false,
+    estimatedNextPrize: "R$ 1.700.000,00",
+    prizeSena: "15 Acertos Premiado",
+    lastUpdated: Date.now(),
+    source: 'official_archive',
+    lottery: 'lotofacil'
+  }));
+
   const [selectedTrevos, setSelectedTrevos] = useState<number[]>([1, 2]);
 
-  const activeOfficialDraw = currentLottery === 'maismilionaria' ? latestMaisMilionariaDraw : latestOfficialDraw;
+  const activeOfficialDraw = currentLottery === 'lotofacil'
+    ? latestLotofacilDraw
+    : (currentLottery === 'maismilionaria' ? latestMaisMilionariaDraw : latestOfficialDraw);
 
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [betCount, setBetCount] = useState<number>(6);
@@ -163,28 +187,33 @@ const App: React.FC = () => {
     };
   });
 
-  // Sorteios de referência de conferência independentes para Mega-Sena e +Milionária
+  // Sorteios de referência de conferência independentes para Mega-Sena, +Milionária e Lotofácil
   const [megaRefDraw, setMegaRefDraw] = useState<number[]>(latestOfficialDraw.numbers);
   const [maisMilionariaRefDraw, setMaisMilionariaRefDraw] = useState<number[]>(latestMaisMilionariaDraw.numbers);
   const [maisMilionariaRefTrevos, setMaisMilionariaRefTrevos] = useState<number[]>(latestMaisMilionariaDraw.trevos || [1, 2]);
+  const [lotofacilRefDraw, setLotofacilRefDraw] = useState<number[]>(latestLotofacilDraw.numbers);
 
   const [isCustomizingRef, setIsCustomizingRef] = useState(false);
   const [tempRefInput, setTempRefInput] = useState(latestOfficialDraw.numbers.join(', '));
   const [tempRefTrevosInput, setTempRefTrevosInput] = useState((latestMaisMilionariaDraw.trevos || [1, 2]).join(', '));
 
-  const activeRefNumbers = currentLottery === 'maismilionaria' ? maisMilionariaRefDraw : megaRefDraw;
+  const activeRefNumbers = currentLottery === 'lotofacil'
+    ? lotofacilRefDraw
+    : (currentLottery === 'maismilionaria' ? maisMilionariaRefDraw : megaRefDraw);
   const activeRefTrevos = currentLottery === 'maismilionaria' ? maisMilionariaRefTrevos : undefined;
 
   // Sincroniza inputs ao mudar de perfil de loteria
   useEffect(() => {
-    if (currentLottery === 'maismilionaria') {
+    if (currentLottery === 'lotofacil') {
+      setTempRefInput(lotofacilRefDraw.join(', '));
+    } else if (currentLottery === 'maismilionaria') {
       setTempRefInput(maisMilionariaRefDraw.join(', '));
       setTempRefTrevosInput(maisMilionariaRefTrevos.join(', '));
     } else {
       setTempRefInput(megaRefDraw.join(', '));
     }
     setIsCustomizingRef(false);
-  }, [currentLottery, megaRefDraw, maisMilionariaRefDraw, maisMilionariaRefTrevos]);
+  }, [currentLottery, megaRefDraw, maisMilionariaRefDraw, maisMilionariaRefTrevos, lotofacilRefDraw]);
 
   // Filtros de histórico
   const [filterType, setFilterType] = useState<string>('all');
@@ -290,7 +319,12 @@ const App: React.FC = () => {
   };
 
   const handleUpdateLatestDraw = (updated: OfficialDrawResult) => {
-    if (currentLottery === 'maismilionaria') {
+    if (currentLottery === 'lotofacil') {
+      setLatestLotofacilDraw(updated);
+      setLotofacilRefDraw(updated.numbers);
+      setTempRefInput(updated.numbers.join(', '));
+      showToast(`Concurso #${updated.contestNumber} da Lotofácil salvo com sucesso!`, 'success');
+    } else if (currentLottery === 'maismilionaria') {
       setLatestMaisMilionariaDraw(updated);
       setMaisMilionariaRefDraw(updated.numbers);
       if (updated.trevos) setMaisMilionariaRefTrevos(updated.trevos);
@@ -307,7 +341,12 @@ const App: React.FC = () => {
   };
 
   const handleRestoreOfficialDrawInChecker = () => {
-    if (currentLottery === 'maismilionaria') {
+    if (currentLottery === 'lotofacil') {
+      setLotofacilRefDraw(latestLotofacilDraw.numbers);
+      setTempRefInput(latestLotofacilDraw.numbers.join(', '));
+      setIsCustomizingRef(false);
+      showToast(`Conferência restaurada para o Último Concurso Oficial Caixa Lotofácil #${latestLotofacilDraw.contestNumber}!`, 'success');
+    } else if (currentLottery === 'maismilionaria') {
       setMaisMilionariaRefDraw(latestMaisMilionariaDraw.numbers);
       setMaisMilionariaRefTrevos(latestMaisMilionariaDraw.trevos || [1, 2]);
       setTempRefInput(latestMaisMilionariaDraw.numbers.join(', '));
@@ -336,10 +375,11 @@ const App: React.FC = () => {
     const timer = setTimeout(() => {
       const megaList = buildDrawsListWithLatest(latestOfficialDraw);
       const maisList = buildMaisMilionariaDrawsListWithLatest(latestMaisMilionariaDraw);
-      offlineCacheManager.warmOfflineCache(megaList, maisList);
+      const lotoList = buildLotofacilDrawsListWithLatest(latestLotofacilDraw);
+      offlineCacheManager.warmOfflineCache(megaList, maisList, lotoList);
     }, 350);
     return () => clearTimeout(timer);
-  }, [latestOfficialDraw, latestMaisMilionariaDraw]);
+  }, [latestOfficialDraw, latestMaisMilionariaDraw, latestLotofacilDraw]);
 
   // Salvar histórico e regras em cache local com backup secundário
   useEffect(() => {
@@ -420,8 +460,15 @@ const App: React.FC = () => {
 
   const calculateSumData = (nums: number[]) => {
     const sum = nums.reduce((a, b) => a + b, 0);
-    const minIdeal = logicOptions.sum160to240 ? 160 : 150;
-    const maxIdeal = logicOptions.sum160to240 ? 240 : 210;
+    let minIdeal = logicOptions.sum160to240 ? 160 : 150;
+    let maxIdeal = logicOptions.sum160to240 ? 240 : 210;
+    if (currentLottery === 'lotofacil') {
+      minIdeal = 180;
+      maxIdeal = 220;
+    } else if (currentLottery === 'maismilionaria') {
+      minIdeal = 120;
+      maxIdeal = 185;
+    }
     
     let sumStatus: Bet['sumStatus'] = 'ideal';
     if (sum < minIdeal) sumStatus = 'low';
@@ -430,15 +477,21 @@ const App: React.FC = () => {
   };
 
   // Diferimento dos estados via useDeferredValue para garantir 60 FPS na interação com a cartela
-  // e evitar engasgos durante a verificação das 15 regras estatísticas e análise avançada
+  // e evitar engasgos durante a verificação das regras estatísticas e análise avançada
   const deferredSelectedNumbers = useDeferredValue(selectedNumbers);
   const deferredLogicOptions = useDeferredValue(logicOptions);
   const deferredOfficialNumbers = useDeferredValue(latestOfficialDraw.numbers);
+  const deferredLotofacilNumbers = useDeferredValue(latestLotofacilDraw.numbers);
+  const deferredMaisMilionariaNumbers = useDeferredValue(latestMaisMilionariaDraw.numbers);
 
   // Diagnóstico em tempo real da seleção atual na cartela integrando o último concurso
   const currentValidation = useMemo(() => {
-    return validateGameAgainstRules(deferredSelectedNumbers, deferredLogicOptions, deferredOfficialNumbers);
-  }, [deferredSelectedNumbers, deferredLogicOptions, deferredOfficialNumbers]);
+    if (currentLottery === 'lotofacil') {
+      return validateLotofacilBet(deferredSelectedNumbers, deferredLogicOptions, deferredLotofacilNumbers);
+    }
+    const refNumbers = currentLottery === 'maismilionaria' ? deferredMaisMilionariaNumbers : deferredOfficialNumbers;
+    return validateGameAgainstRules(deferredSelectedNumbers, deferredLogicOptions, refNumbers);
+  }, [currentLottery, deferredSelectedNumbers, deferredLogicOptions, deferredLotofacilNumbers, deferredMaisMilionariaNumbers, deferredOfficialNumbers]);
 
   const isRulesPending = selectedNumbers !== deferredSelectedNumbers;
 
@@ -462,7 +515,11 @@ const App: React.FC = () => {
     advancedMetrics?: Bet['advancedMetrics']
   ) => {
     const { sum, sumStatus } = calculateSumData(numbers);
-    const resolvedAdvancedMetrics = advancedMetrics || buildAdvancedBetMetrics(validateGameAgainstRules(numbers, logicOptions, activeRefNumbers));
+    const resolvedAdvancedMetrics = advancedMetrics || (
+      currentLottery === 'lotofacil'
+        ? validateLotofacilBet(numbers, logicOptions, activeRefNumbers).advancedMetrics
+        : buildAdvancedBetMetrics(validateGameAgainstRules(numbers, logicOptions, activeRefNumbers))
+    );
     const newBet: Bet = {
       id: Math.random().toString(36).substring(2, 11),
       numbers: [...numbers].sort((a, b) => a - b),
@@ -513,11 +570,13 @@ const App: React.FC = () => {
   };
 
   const handleManualSave = () => {
-    if (selectedNumbers.length < 6) {
-      showToast("Selecione pelo menos 6 dezenas para salvar.", 'error');
+    const minRequired = currentLottery === 'lotofacil' ? 15 : 6;
+    if (selectedNumbers.length < minRequired) {
+      showToast(`Selecione pelo menos ${minRequired} dezenas para salvar.`, 'error');
       return;
     }
-    const reason = `Aposta montada manualmente na cartela (${selectedNumbers.length} dezenas).`;
+    const lottoLabel = currentLottery === 'lotofacil' ? 'Lotofácil' : (currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena');
+    const reason = `Aposta montada manualmente na cartela da ${lottoLabel} (${selectedNumbers.length} dezenas).`;
     saveBet('manual', selectedNumbers, reason);
     setSelectedNumbers([]);
     showToast("Aposta salva com sucesso no histórico permanente!");
@@ -532,10 +591,17 @@ const App: React.FC = () => {
     setIsOptimizing(true);
     setTimeout(() => {
       try {
-        const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers);
-        setSelectedNumbers(optimizedNumbers);
-        setBetCount(optimizedNumbers.length);
-        showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
+        if (currentLottery === 'lotofacil') {
+          const { optimizedNumbers, changesMade } = autoOptimizeLotofacilGame(selectedNumbers, latestLotofacilDraw.numbers);
+          setSelectedNumbers(optimizedNumbers);
+          setBetCount(optimizedNumbers.length);
+          showToast(`Lotofácil auto-otimizada com sucesso (${changesMade.length} ajustes na Moldura e Paridade)!`, 'success');
+        } else {
+          const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers);
+          setSelectedNumbers(optimizedNumbers);
+          setBetCount(optimizedNumbers.length);
+          showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
+        }
       } finally {
         setIsOptimizing(false);
       }
@@ -547,11 +613,22 @@ const App: React.FC = () => {
     setIsRuleGenerating(true);
     setTimeout(() => {
       try {
-        const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
-        setSelectedNumbers(result.numbers);
-        showToast(result.passedAllRules 
-          ? `Cartela preenchida integrando o Concurso #${latestOfficialDraw.contestNumber} (Score: ${result.validation.advancedScore}%)!` 
-          : `Cartela preenchida com otimização analítica (${result.validation.advancedScore}% conformidade)!`, 'success');
+        if (currentLottery === 'lotofacil') {
+          const result = generateLotofacilWithRules(betCount, logicOptions, latestLotofacilDraw.numbers);
+          setSelectedNumbers(result.numbers);
+          showToast(`Cartela da Lotofácil preenchida com as regras de ouro (Moldura, Par/Ímpar, Repetidas)! (Score: ${result.validation.advancedScore}%)`, 'success');
+        } else if (currentLottery === 'maismilionaria') {
+          const result = generateMaisMilionariaGameWithRules(betCount, logicOptions, latestMaisMilionariaDraw.numbers);
+          setSelectedNumbers(result.numbers);
+          setSelectedTrevos(result.trevos);
+          showToast(`Cartela da +Milionária preenchida integrando Concurso #${latestMaisMilionariaDraw.contestNumber}!`, 'success');
+        } else {
+          const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
+          setSelectedNumbers(result.numbers);
+          showToast(result.passedAllRules 
+            ? `Cartela preenchida integrando o Concurso #${latestOfficialDraw.contestNumber} (Score: ${result.validation.advancedScore}%)!` 
+            : `Cartela preenchida com otimização analítica (${result.validation.advancedScore}% conformidade)!`, 'success');
+        }
       } finally {
         setIsRuleGenerating(false);
       }
@@ -562,7 +639,12 @@ const App: React.FC = () => {
     setIsRuleGenerating(true);
     setTimeout(() => {
       try {
-        if (currentLottery === 'maismilionaria') {
+        if (currentLottery === 'lotofacil') {
+          const result = generateLotofacilWithRules(betCount, logicOptions, latestLotofacilDraw.numbers);
+          saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
+          setSelectedNumbers(result.numbers);
+          showToast(`Jogo de ${result.numbers.length} dezenas da Lotofácil gerado integrando Concurso #${latestLotofacilDraw.contestNumber}!`, 'success');
+        } else if (currentLottery === 'maismilionaria') {
           const result = generateMaisMilionariaGameWithRules(betCount, logicOptions, latestMaisMilionariaDraw.numbers);
           saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
           setSelectedNumbers(result.numbers);
@@ -586,9 +668,10 @@ const App: React.FC = () => {
 
   // Surpresinha clássica pura
   const generateSurpresinha = () => {
-    const maxVal = currentLottery === 'maismilionaria' ? 50 : 60;
+    const maxVal = currentLottery === 'lotofacil' ? 25 : (currentLottery === 'maismilionaria' ? 50 : 60);
+    const targetCount = currentLottery === 'lotofacil' ? (betCount || 15) : betCount;
     const numbers: number[] = [];
-    while (numbers.length < betCount) {
+    while (numbers.length < targetCount) {
       const r = Math.floor(Math.random() * maxVal) + 1;
       if (!numbers.includes(r)) numbers.push(r);
     }
@@ -602,25 +685,38 @@ const App: React.FC = () => {
       }
       setSelectedTrevos(trevos.sort((a, b) => a - b));
     }
-    saveBet('random', sorted, `Surpresinha aleatória sem filtros estatísticos (${currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena'}).`);
+    const lottoLabel = currentLottery === 'lotofacil' ? 'Lotofácil' : (currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena');
+    saveBet('random', sorted, `Surpresinha aleatória sem filtros estatísticos (${lottoLabel}).`);
     showToast("Surpresinha gerada e registrada no histórico!");
   };
 
   // Gerador com IA integrando obrigatoriamente o último sorteio oficial
   const generateAI = async () => {
     setIsLoading(true);
-    setLoadingStatus(`Analisando Concurso Oficial #${latestOfficialDraw.contestNumber} e Estatísticas...`);
+    setLoadingStatus(`Analisando Concurso Oficial #${activeOfficialDraw.contestNumber} e Estatísticas...`);
     try {
-      const result = await generateLuckyNumbersWithAI(betCount, logicOptions, latestOfficialDraw);
+      const result = await generateLuckyNumbersWithAI(betCount, logicOptions, activeOfficialDraw, currentLottery);
       setSelectedNumbers(result.numbers);
       saveBet('ai', result.numbers, result.reasoning, result.groundingUrls);
-      showToast(`Jogo gerado com Inteligência Artificial integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
+      showToast(`Jogo gerado com Inteligência Artificial integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
     } catch (error) {
-      // Fallback local garantido via análise avançada com o último concurso
-      const fallback = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
-      setSelectedNumbers(fallback.numbers);
-      saveBet('smart_rules', fallback.numbers, fallback.reasoning, undefined, fallback.advancedMetrics);
-      showToast(`Jogo gerado com sucesso via motor estatístico integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
+      if (currentLottery === 'lotofacil') {
+        const fallback = generateLotofacilWithRules(betCount, logicOptions, latestLotofacilDraw.numbers);
+        setSelectedNumbers(fallback.numbers);
+        saveBet('smart_rules', fallback.numbers, fallback.reasoning, undefined, fallback.advancedMetrics);
+        showToast(`Jogo da Lotofácil gerado pelo motor estatístico integrando o Concurso #${latestLotofacilDraw.contestNumber}!`);
+      } else if (currentLottery === 'maismilionaria') {
+        const fallback = generateMaisMilionariaGameWithRules(betCount, logicOptions, latestMaisMilionariaDraw.numbers);
+        setSelectedNumbers(fallback.numbers);
+        setSelectedTrevos(fallback.trevos);
+        saveBet('smart_rules', fallback.numbers, fallback.reasoning, undefined, fallback.advancedMetrics);
+        showToast(`Jogo da +Milionária gerado pelo motor estatístico integrando o Concurso #${latestMaisMilionariaDraw.contestNumber}!`);
+      } else {
+        const fallback = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
+        setSelectedNumbers(fallback.numbers);
+        saveBet('smart_rules', fallback.numbers, fallback.reasoning, undefined, fallback.advancedMetrics);
+        showToast(`Jogo gerado com sucesso via motor estatístico integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
+      }
     } finally {
       setIsLoading(false);
       setLoadingStatus("");
@@ -631,19 +727,26 @@ const App: React.FC = () => {
   const generateBatchAI = async () => {
     setIsBatchLoading(true);
     try {
-      const result = await generateBatchLuckyNumbersWithAI(logicOptions, latestOfficialDraw);
+      const result = await generateBatchLuckyNumbersWithAI(logicOptions, activeOfficialDraw, currentLottery);
       result.games.forEach(game => {
         saveBet('ai', game.numbers, game.reasoning, result.groundingUrls);
       });
-      showToast(`${result.games.length} jogos gerados integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
+      showToast(`${result.games.length} jogos gerados integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
       setActiveTab('history');
     } catch (error) {
-      // Fallback local gerando 5 jogos com regras e último concurso
       for (let i = 0; i < 5; i++) {
-        const game = generateGameWithRules(6, logicOptions, latestOfficialDraw.numbers);
-        saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
+        if (currentLottery === 'lotofacil') {
+          const game = generateLotofacilWithRules(15, logicOptions, latestLotofacilDraw.numbers);
+          saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
+        } else if (currentLottery === 'maismilionaria') {
+          const game = generateMaisMilionariaGameWithRules(6, logicOptions, latestMaisMilionariaDraw.numbers);
+          saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
+        } else {
+          const game = generateGameWithRules(6, logicOptions, latestOfficialDraw.numbers);
+          saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
+        }
       }
-      showToast(`5 jogos gerados com sucesso integrando o Concurso #${latestOfficialDraw.contestNumber}!`);
+      showToast(`5 jogos gerados com sucesso integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
       setActiveTab('history');
     } finally {
       setIsBatchLoading(false);
@@ -755,8 +858,10 @@ const App: React.FC = () => {
 
   // Atualizar sorteio de referência manual
   const handleSaveReferenceDraw = () => {
+    const isLoto = currentLottery === 'lotofacil';
     const isMais = currentLottery === 'maismilionaria';
-    const maxNum = isMais ? 50 : 60;
+    const maxNum = isLoto ? 25 : (isMais ? 50 : 60);
+    const expectedCount = isLoto ? 15 : 6;
 
     const parsedNums = tempRefInput
       .split(/[\s,;-]+/)
@@ -765,12 +870,16 @@ const App: React.FC = () => {
 
     const uniqueNums = Array.from(new Set(parsedNums)).sort((a: number, b: number) => a - b);
 
-    if (uniqueNums.length !== 6) {
-      showToast(`Informe exatamente 6 dezenas válidas (01 a ${maxNum}).`, 'error');
+    if (uniqueNums.length !== expectedCount) {
+      showToast(`Informe exatamente ${expectedCount} dezenas válidas (01 a ${maxNum}).`, 'error');
       return;
     }
 
-    if (isMais) {
+    if (isLoto) {
+      setLotofacilRefDraw(uniqueNums);
+      setIsCustomizingRef(false);
+      showToast("Sorteio de referência da Lotofácil atualizado com sucesso!");
+    } else if (isMais) {
       const parsedTrevos = tempRefTrevosInput
         .split(/[\s,;-]+/)
         .map(s => parseInt(s.trim(), 10))
@@ -794,6 +903,26 @@ const App: React.FC = () => {
   // Contabilidade geral de conferência
   const checkerStats = useMemo(() => {
     const relevantBets = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+
+    if (currentLottery === 'lotofacil') {
+      let hits15 = 0;
+      let hits14 = 0;
+      let hits13 = 0;
+      let hits12 = 0;
+      let hits11 = 0;
+
+      relevantBets.forEach(bet => {
+        const hits = bet.numbers.filter(n => activeRefNumbers.includes(n)).length;
+        if (hits >= 15) hits15++;
+        else if (hits === 14) hits14++;
+        else if (hits === 13) hits13++;
+        else if (hits === 12) hits12++;
+        else if (hits === 11) hits11++;
+      });
+
+      const totalPrizeFixed = hits13 * 30 + hits12 * 12 + hits11 * 6;
+      return { hits15, hits14, hits13, hits12, hits11, totalPrizeFixed, total: relevantBets.length };
+    }
 
     if (currentLottery === 'maismilionaria') {
       let faixa1 = 0; // 6 + 2 trevos
@@ -850,6 +979,9 @@ const App: React.FC = () => {
     if (onlyPrizes && activeRefNumbers.length > 0) {
       result = result.filter(b => {
         const hits = b.numbers.filter(n => activeRefNumbers.includes(n)).length;
+        if (currentLottery === 'lotofacil') {
+          return hits >= 11;
+        }
         if (currentLottery === 'maismilionaria') {
           const tHits = (activeRefTrevos && b.trevos) 
             ? b.trevos.filter(t => activeRefTrevos.includes(t)).length 
@@ -914,14 +1046,18 @@ const App: React.FC = () => {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center space-x-3">
             <div className={`p-2.5 rounded-2xl shadow-md text-white transition-colors ${
-              currentLottery === 'maismilionaria' ? 'bg-gradient-to-br from-amber-600 to-yellow-600' : 'bg-gradient-to-br from-emerald-600 to-teal-700'
+              currentLottery === 'lotofacil'
+                ? 'bg-gradient-to-br from-purple-600 to-fuchsia-600'
+                : (currentLottery === 'maismilionaria' ? 'bg-gradient-to-br from-amber-600 to-yellow-600' : 'bg-gradient-to-br from-emerald-600 to-teal-700')
             }`}>
-              {currentLottery === 'maismilionaria' ? <Clover size={26} /> : <Sparkles size={26} />}
+              {currentLottery === 'lotofacil' ? <Award size={26} /> : (currentLottery === 'maismilionaria' ? <Clover size={26} /> : <Sparkles size={26} />)}
             </div>
             <div>
               <div className="flex items-center space-x-2">
                 <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                  {currentLottery === 'maismilionaria' ? '+Milionária Sorte' : 'Mega Sorte'}
+                  {currentLottery === 'lotofacil' 
+                    ? 'Lotofácil Sorte' 
+                    : (currentLottery === 'maismilionaria' ? '+Milionária Sorte' : 'Mega Sorte')}
                 </h1>
                 
                 {/* Switcher de Modalidade / Perfil */}
@@ -930,7 +1066,8 @@ const App: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setCurrentLottery('megasena');
-                      setSelectedNumbers(prev => prev.filter(n => n <= 60));
+                      setBetCount(6);
+                      setSelectedNumbers([]);
                     }}
                     className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
                       currentLottery === 'megasena'
@@ -944,7 +1081,8 @@ const App: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setCurrentLottery('maismilionaria');
-                      setSelectedNumbers(prev => prev.filter(n => n <= 50));
+                      setBetCount(6);
+                      setSelectedNumbers([]);
                     }}
                     className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
                       currentLottery === 'maismilionaria'
@@ -954,12 +1092,29 @@ const App: React.FC = () => {
                   >
                     +Milionária (50+6)
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentLottery('lotofacil');
+                      setBetCount(15);
+                      setSelectedNumbers([]);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                      currentLottery === 'lotofacil'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-950'
+                    }`}
+                  >
+                    Lotofácil (25)
+                  </button>
                 </div>
               </div>
               <p className="text-[11px] font-medium text-slate-500">
-                {currentLottery === 'maismilionaria'
-                  ? 'Base Oficial dos 401 concursos da +Milionária (Caixa Econômica Federal)'
-                  : 'Base Oficial de mais de 3.070 concursos da Mega-Sena (Caixa Econômica Federal)'}
+                {currentLottery === 'lotofacil'
+                  ? 'Base Oficial dos mais de 3.350 concursos da Lotofácil (Caixa Econômica Federal)'
+                  : (currentLottery === 'maismilionaria'
+                    ? 'Base Oficial dos 401 concursos da +Milionária (Caixa Econômica Federal)'
+                    : 'Base Oficial de mais de 3.070 concursos da Mega-Sena (Caixa Econômica Federal)')}
               </p>
             </div>
           </div>
@@ -972,7 +1127,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('play')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'play' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -985,7 +1140,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('simulator')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'simulator' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -998,7 +1153,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('analytics')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'analytics' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -1011,7 +1166,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('sequences')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'sequences' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -1024,7 +1179,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('wheeling')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'wheeling' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -1037,7 +1192,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('comparator')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'comparator' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -1076,7 +1231,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('checker')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'checker' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -1089,7 +1244,7 @@ const App: React.FC = () => {
                 onClick={() => setActiveTab('history')} 
                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'history' 
-                    ? (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm')
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
@@ -1236,10 +1391,16 @@ const App: React.FC = () => {
                 <div className="flex flex-wrap justify-between items-center gap-3 mb-6 pb-4 border-b border-slate-100">
                   <div>
                     <h2 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
-                      <span>Cartela Oficial {currentLottery === 'maismilionaria' ? '+Milionária (01 a 50 + Trevos)' : 'Mega-Sena (01 a 60)'}</span>
+                      <span>
+                        Cartela Oficial {currentLottery === 'lotofacil' 
+                          ? 'Lotofácil (01 a 25 - Marque 15 a 20 dezenas)' 
+                          : (currentLottery === 'maismilionaria' ? '+Milionária (01 a 50 + Trevos)' : 'Mega-Sena (01 a 60)')}
+                      </span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Toque para marcar suas dezenas ou use os geradores inteligentes
+                      {currentLottery === 'lotofacil'
+                        ? 'Toque para marcar suas 15 dezenas (Moldura em destaque) ou use os geradores estatísticos'
+                        : 'Toque para marcar suas dezenas ou use os geradores inteligentes'}
                     </p>
                   </div>
 
@@ -1256,9 +1417,11 @@ const App: React.FC = () => {
                       }} 
                       className="bg-slate-50 text-slate-900 border border-slate-200 text-xs font-bold py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-slate-100 transition-colors"
                     >
-                      {(currentLottery === 'maismilionaria' 
-                        ? [6, 7, 8, 9, 10, 11, 12] 
-                        : [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+                      {(currentLottery === 'lotofacil'
+                        ? [15, 16, 17, 18, 19, 20]
+                        : (currentLottery === 'maismilionaria' 
+                          ? [6, 7, 8, 9, 10, 11, 12] 
+                          : [6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
                       ).map(n => (
                         <option key={n} value={n}>{n} dezenas</option>
                       ))}
@@ -1268,11 +1431,15 @@ const App: React.FC = () => {
 
                 {/* Status Bar / Contador de Selecionadas */}
                 <div className={`border rounded-2xl p-3 sm:p-4 mb-6 flex flex-wrap items-center justify-between gap-3 ${
-                  currentLottery === 'maismilionaria' ? 'bg-amber-50/70 border-amber-200/70' : 'bg-emerald-50/70 border-emerald-200/70'
+                  currentLottery === 'lotofacil'
+                    ? 'bg-purple-50/70 border-purple-200/70'
+                    : (currentLottery === 'maismilionaria' ? 'bg-amber-50/70 border-amber-200/70' : 'bg-emerald-50/70 border-emerald-200/70')
                 }`}>
                   <div className="flex items-center space-x-3">
                     <div className={`w-9 h-9 rounded-xl text-white font-black flex items-center justify-center text-sm shadow-sm ${
-                      currentLottery === 'maismilionaria' ? 'bg-amber-600' : 'bg-emerald-600'
+                      currentLottery === 'lotofacil'
+                        ? 'bg-purple-600'
+                        : (currentLottery === 'maismilionaria' ? 'bg-amber-600' : 'bg-emerald-600')
                     }`}>
                       {selectedNumbers.length}
                     </div>
@@ -1280,7 +1447,11 @@ const App: React.FC = () => {
                       <p className="text-xs font-bold text-slate-900">
                         {selectedNumbers.length} de {betCount} dezenas selecionadas
                       </p>
-                      <p className={`text-[11px] ${currentLottery === 'maismilionaria' ? 'text-amber-800' : 'text-emerald-700'}`}>
+                      <p className={`text-[11px] ${
+                        currentLottery === 'lotofacil' 
+                          ? 'text-purple-800' 
+                          : (currentLottery === 'maismilionaria' ? 'text-amber-800' : 'text-emerald-700')
+                      }`}>
                         {selectedNumbers.length < betCount 
                           ? `Faltam ${betCount - selectedNumbers.length} para completar o bilhete`
                           : "Bilhete completo pronto para salvar!"}
@@ -1295,7 +1466,9 @@ const App: React.FC = () => {
                     ) : (
                       selectedNumbers.map(n => (
                         <span key={n} className={`inline-flex items-center px-2 py-0.5 rounded-lg text-white text-xs font-bold ${
-                          currentLottery === 'maismilionaria' ? 'bg-amber-700' : 'bg-emerald-700'
+                          currentLottery === 'lotofacil' 
+                            ? 'bg-purple-700' 
+                            : (currentLottery === 'maismilionaria' ? 'bg-amber-700' : 'bg-emerald-700')
                         }`}>
                           {n.toString().padStart(2, '0')}
                         </span>
@@ -1310,18 +1483,52 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Grade de Dezenas */}
-                <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 sm:gap-2 justify-items-center mb-6">
-                  {Array.from({ length: currentLottery === 'maismilionaria' ? 50 : 60 }, (_, i) => i + 1).map((num) => (
-                    <NumberBall 
-                      key={num} 
-                      num={num} 
-                      isSelected={selectedNumbers.includes(num)} 
-                      isHit={activeRefNumbers.includes(num)}
-                      onClick={() => toggleNumber(num)} 
-                      size="md"
-                    />
-                  ))}
-                </div>
+                {currentLottery === 'lotofacil' ? (
+                  <div className="mb-6">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2 px-1">
+                      <span className="text-[11px] font-bold text-slate-600">
+                        Cartela 5x5: <span className="text-purple-700 font-extrabold">Moldura (16 dezenas)</span> e <span className="text-indigo-700 font-extrabold">Centro (9 dezenas)</span>
+                      </span>
+                      <span className="text-[10px] text-purple-800 bg-purple-100 border border-purple-200 px-2 py-0.5 rounded-md font-bold">
+                        Padrão Caixa: 9 a 11 na Moldura
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-2 max-w-sm sm:max-w-md mx-auto justify-items-center p-3.5 bg-gradient-to-br from-purple-50/60 to-fuchsia-50/40 border border-purple-200/80 rounded-3xl shadow-inner">
+                      {Array.from({ length: 25 }, (_, i) => i + 1).map((num) => {
+                        const isFrame = LOTOFACIL_FRAME.includes(num);
+                        return (
+                          <div key={num} className="relative flex flex-col items-center">
+                            <NumberBall 
+                              num={num} 
+                              isSelected={selectedNumbers.includes(num)} 
+                              isHit={activeRefNumbers.includes(num)}
+                              onClick={() => toggleNumber(num)} 
+                              size="md"
+                            />
+                            <span className={`text-[8px] font-black uppercase tracking-tighter mt-0.5 ${
+                              isFrame ? 'text-purple-600 font-bold' : 'text-indigo-500'
+                            }`}>
+                              {isFrame ? 'Moldura' : 'Centro'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 sm:gap-2 justify-items-center mb-6">
+                    {Array.from({ length: currentLottery === 'maismilionaria' ? 50 : 60 }, (_, i) => i + 1).map((num) => (
+                      <NumberBall 
+                        key={num} 
+                        num={num} 
+                        isSelected={selectedNumbers.includes(num)} 
+                        isHit={activeRefNumbers.includes(num)}
+                        onClick={() => toggleNumber(num)} 
+                        size="md"
+                      />
+                    ))}
+                  </div>
+                )}
 
                 {/* Se for +Milionária, Seletor de 2 Trevos Oficiais */}
                 {currentLottery === 'maismilionaria' && (
@@ -1375,7 +1582,7 @@ const App: React.FC = () => {
                 {/* Legenda de cores */}
                 <div className="flex flex-wrap items-center justify-center gap-4 text-[11px] text-slate-600 mb-6 pt-3 border-t border-slate-100">
                   <span className="flex items-center space-x-1.5">
-                    <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 border border-emerald-400 inline-block"></span>
+                    <span className={`w-3.5 h-3.5 rounded-full inline-block ${currentLottery === 'lotofacil' ? 'bg-purple-600 border border-purple-400' : 'bg-emerald-600 border border-emerald-400'}`}></span>
                     <span>Marcado no bilhete</span>
                   </span>
                   <span className="flex items-center space-x-1.5">
@@ -1383,7 +1590,7 @@ const App: React.FC = () => {
                     <span>Sorteio de referência</span>
                   </span>
                   <span className="flex items-center space-x-1.5">
-                    <span className="w-3.5 h-3.5 rounded-full bg-white border border-emerald-200 inline-block"></span>
+                    <span className="w-3.5 h-3.5 rounded-full bg-white border border-slate-300 inline-block"></span>
                     <span>Disponível</span>
                   </span>
                 </div>
@@ -1393,8 +1600,12 @@ const App: React.FC = () => {
                   <button 
                     type="button"
                     onClick={handleManualSave} 
-                    disabled={selectedNumbers.length < 6} 
-                    className="flex-1 min-w-[200px] bg-emerald-600 text-white py-3.5 px-4 rounded-2xl font-black shadow-md hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-50 transition-all flex items-center justify-center space-x-2 text-xs sm:text-sm"
+                    disabled={selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)} 
+                    className={`flex-1 min-w-[200px] text-white py-3.5 px-4 rounded-2xl font-black shadow-md active:scale-[0.99] disabled:opacity-50 transition-all flex items-center justify-center space-x-2 text-xs sm:text-sm ${
+                      currentLottery === 'lotofacil'
+                        ? 'bg-purple-600 hover:bg-purple-700'
+                        : (currentLottery === 'maismilionaria' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')
+                    }`}
                   >
                     <Save size={18} />
                     <span>SALVAR APOSTA NO HISTÓRICO</span>
@@ -1403,10 +1614,14 @@ const App: React.FC = () => {
                   <button 
                     type="button"
                     onClick={handleFillBoardWithRules} 
-                    className="bg-emerald-100 text-emerald-900 py-3 px-4 rounded-2xl font-bold hover:bg-emerald-200 active:scale-[0.99] border border-emerald-200 transition-all flex items-center space-x-1.5 text-xs"
+                    className={`py-3 px-4 rounded-2xl font-bold active:scale-[0.99] border transition-all flex items-center space-x-1.5 text-xs ${
+                      currentLottery === 'lotofacil'
+                        ? 'bg-purple-100 hover:bg-purple-200 text-purple-900 border-purple-200'
+                        : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border-emerald-200'
+                    }`}
                     title="Preenche a cartela atendendo às regras ativas"
                   >
-                    <Zap size={16} className="text-emerald-700" />
+                    <Zap size={16} className={currentLottery === 'lotofacil' ? 'text-purple-700' : 'text-emerald-700'} />
                     <span className="hidden sm:inline">Preencher c/ Regras</span>
                     <span className="sm:hidden">Regras</span>
                   </button>
@@ -1434,211 +1649,313 @@ const App: React.FC = () => {
               </div>
 
               {/* HUD / Diagnóstico em Tempo Real das Regras Estatísticas */}
-              <div className="bg-white rounded-3xl shadow-sm border border-emerald-100 p-4 sm:p-6">
+              <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-black text-emerald-950 flex items-center space-x-2">
-                    <Activity size={18} className="text-emerald-600" />
-                    <span>Diagnóstico Estatístico da Seleção Atual</span>
+                  <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+                    <Activity size={18} className={currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'} />
+                    <span>Diagnóstico Estatístico ({currentLottery === 'lotofacil' ? 'Lotofácil' : (currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena')})</span>
                   </h3>
                   <span className={`text-[11px] font-extrabold px-2.5 py-1 rounded-full border ${
-                    selectedNumbers.length < 6 
+                    selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)
                       ? 'bg-slate-100 text-slate-600 border-slate-200' 
                       : currentValidation.allActiveRulesPassed 
-                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                        ? (currentLottery === 'lotofacil' ? 'bg-purple-100 text-purple-800 border-purple-300' : 'bg-emerald-100 text-emerald-800 border-emerald-300') 
                         : 'bg-amber-100 text-amber-800 border-amber-300'
                   }`}>
-                    {selectedNumbers.length < 6 
-                      ? 'Selecione 6+ dezenas' 
+                    {selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)
+                      ? `Selecione ${currentLottery === 'lotofacil' ? '15+' : '6+'} dezenas` 
                       : currentValidation.allActiveRulesPassed 
                         ? '100% Aprovado nas Regras Ativas' 
                         : `${currentValidation.passedRulesCount}/${currentValidation.activeRulesCount} Regras Aprovadas`}
                   </span>
                 </div>
 
-                {/* Grade de Verificação das Regras */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 text-xs">
-                  {/* Soma */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.sum160to240 ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.sumValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Soma (160–240)</span>
-                      {logicOptions.sum160to240 && (currentValidation.sumValid ? <Check size={14} className="text-emerald-600 font-bold" /> : <span className="text-[10px] font-bold text-red-600">Ajustar</span>)}
+                {/* Grade de Verificação das Regras Adaptativa */}
+                {currentLottery === 'lotofacil' ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                    {/* Moldura x Centro */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      (currentValidation as any).molduraValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Moldura (9–11)</span>
+                        {(currentValidation as any).molduraValid ? <Check size={14} className="text-purple-600 font-bold" /> : <span className="text-[10px] font-bold text-red-600">Ajustar</span>}
+                      </div>
+                      <p className="text-base font-black">{(currentValidation as any).molduraCount || 0} Moldura / {(currentValidation as any).centroCount || 0} Centro</p>
+                      <span className="text-[10px] opacity-75">Ocorre em 81% dos sorteios</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.sum}</p>
-                    <span className="text-[10px] opacity-75">
-                      {currentValidation.sum < 160 ? 'Abaixo do ideal' : currentValidation.sum > 240 ? 'Acima do ideal' : 'Na Zona de Ouro'}
-                    </span>
-                  </div>
 
-                  {/* Par/Ímpar */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.balanceEvenOdd ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.evenOddValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Par / Ímpar</span>
-                      {logicOptions.balanceEvenOdd && (currentValidation.evenOddValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">3/3 ou 4/2</span>)}
+                    {/* Par / Ímpar */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      currentValidation.evenOddValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Par / Ímpar</span>
+                        {currentValidation.evenOddValid ? <Check size={14} className="text-purple-600" /> : <span className="text-[10px] font-bold text-red-600">7P/8I ou 8P/7I</span>}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.evenCount}P / {currentValidation.oddCount}I</p>
+                      <span className="text-[10px] opacity-75">Equilíbrio da cartela</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.evenCount}P / {currentValidation.oddCount}I</p>
-                    <span className="text-[10px] opacity-75">Equilíbrio da cartela</span>
-                  </div>
 
-                  {/* Faixa 20 a 50 */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.concentrate20to50 ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.count20to50Valid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Faixa 20–50</span>
-                      {logicOptions.concentrate20to50 && (currentValidation.count20to50Valid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">&ge; 50%</span>)}
+                    {/* Soma */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      currentValidation.sumValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Soma (180–220)</span>
+                        {currentValidation.sumValid ? <Check size={14} className="text-purple-600 font-bold" /> : <span className="text-[10px] font-bold text-red-600">Ajustar</span>}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.sum}</p>
+                      <span className="text-[10px] opacity-75">
+                        {currentValidation.sum < 180 ? 'Abaixo do ideal' : currentValidation.sum > 220 ? 'Acima do ideal' : 'Na Zona de Ouro'}
+                      </span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.count20to50} dezenas</p>
-                    <span className="text-[10px] opacity-75">Miolo mais frequente</span>
-                  </div>
 
-                  {/* Quadrantes */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.spreadDistribution ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.quadrantsValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Quadrantes</span>
-                      {logicOptions.spreadDistribution && (currentValidation.quadrantsValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">&ge; 3 quad.</span>)}
+                    {/* Repetidas do Concurso Anterior */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      currentValidation.repeatValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Repetidas (8–10)</span>
+                        {currentValidation.repeatValid ? <Check size={14} className="text-purple-600 font-bold" /> : <span className="text-[10px] font-bold text-red-600">8 a 10</span>}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.repeatedCount} dezenas</p>
+                      <span className="text-[10px] opacity-75">Concurso #{latestLotofacilDraw.contestNumber}</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.quadrants.filter(q => q > 0).length} de 4</p>
-                    <span className="text-[10px] opacity-75">Espalhamento ideal</span>
-                  </div>
 
-                  {/* Consecutivas */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.max2Consecutive ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.consecutiveValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Seq. Consecutivas</span>
-                      {logicOptions.max2Consecutive && (currentValidation.consecutiveValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">Max 2</span>)}
+                    {/* Números Primos */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      (currentValidation as any).primesValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Primos (5–6)</span>
+                        {(currentValidation as any).primesValid && <Check size={14} className="text-purple-600" />}
+                      </div>
+                      <p className="text-base font-black">{(currentValidation as any).primeCount || 0} primos</p>
+                      <span className="text-[10px] opacity-75">Dentre os 9 primos</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.consecutiveSequences.length} seq.</p>
-                    <span className="text-[10px] opacity-75">Máx {currentValidation.maxConsecutive} seguidos</span>
-                  </div>
 
-                  {/* Finais Iguais */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.max2IdenticalEndings ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.endingsValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Finais Iguais</span>
-                      {logicOptions.max2IdenticalEndings && (currentValidation.endingsValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">Max 2</span>)}
+                    {/* Fibonacci */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      (currentValidation as any).fibonacciValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Fibonacci (3–5)</span>
+                        {(currentValidation as any).fibonacciValid && <Check size={14} className="text-purple-600" />}
+                      </div>
+                      <p className="text-base font-black">{(currentValidation as any).fibonacciCount || 0} números</p>
+                      <span className="text-[10px] opacity-75">Dentre os 7 de Fibo</span>
                     </div>
-                    <p className="text-base font-black">Máx {currentValidation.maxEndingCount}</p>
-                    <span className="text-[10px] opacity-75">Evita finais viciados</span>
-                  </div>
 
-                  {/* Repetição do Anterior */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.repeat1to2 ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.repeatValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Repetição 1–2</span>
-                      {logicOptions.repeat1to2 && (currentValidation.repeatValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">1 ou 2</span>)}
+                    {/* Múltiplos de 3 */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      (currentValidation as any).mult3Valid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Mult. de 3 (4–6)</span>
+                        {(currentValidation as any).mult3Valid && <Check size={14} className="text-purple-600" />}
+                      </div>
+                      <p className="text-base font-black">{(currentValidation as any).mult3Count || 0} dezenas</p>
+                      <span className="text-[10px] opacity-75">Dentre os 8 múltiplos</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.repeatedCount} dezenas</p>
-                    <span className="text-[10px] opacity-75">Padrão histórico</span>
-                  </div>
 
-                  {/* Histórico Oficial (3.071 Concursos) */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.preferHistoricalHotNumbers ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.historicalHotValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Histórico (3.071)</span>
-                      {logicOptions.preferHistoricalHotNumbers && (currentValidation.historicalHotValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">2 a 4 Top</span>)}
+                    {/* Consecutivas */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      currentValidation.consecutiveValid ? 'bg-purple-50/70 border-purple-200 text-purple-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Seq. Consecutiva</span>
+                        {currentValidation.consecutiveValid && <Check size={14} className="text-purple-600" />}
+                      </div>
+                      <p className="text-base font-black">Máx {currentValidation.maxConsecutive} seguidos</p>
+                      <span className="text-[10px] opacity-75">Distribuição fluida</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.historicalHotCount} no Top 20</p>
-                    <span className="text-[10px] opacity-75">Média ~{currentValidation.historicalAverageDraws}x sorteios</span>
                   </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 text-xs">
+                    {/* Soma */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.sum160to240 ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.sumValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Soma (160–240)</span>
+                        {logicOptions.sum160to240 && (currentValidation.sumValid ? <Check size={14} className="text-emerald-600 font-bold" /> : <span className="text-[10px] font-bold text-red-600">Ajustar</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.sum}</p>
+                      <span className="text-[10px] opacity-75">
+                        {currentValidation.sum < 160 ? 'Abaixo do ideal' : currentValidation.sum > 240 ? 'Acima do ideal' : 'Na Zona de Ouro'}
+                      </span>
+                    </div>
 
-                  {/* Duque Histórico (Análise Avançada) */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.useAdvancedDuques ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.duquesValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-slate-50/70 border-slate-200 text-slate-600'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Duque Histórico</span>
-                      {logicOptions.useAdvancedDuques && (currentValidation.duquesValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] text-slate-400">Opcional</span>)}
+                    {/* Par/Ímpar */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.balanceEvenOdd ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.evenOddValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Par / Ímpar</span>
+                        {logicOptions.balanceEvenOdd && (currentValidation.evenOddValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">3/3 ou 4/2</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.evenCount}P / {currentValidation.oddCount}I</p>
+                      <span className="text-[10px] opacity-75">Equilíbrio da cartela</span>
                     </div>
-                    <p className="text-sm font-black truncate">{currentValidation.matchedDuque ? `${currentValidation.matchedDuque[0].toString().padStart(2, '0')} - ${currentValidation.matchedDuque[1].toString().padStart(2, '0')}` : 'Nenhum'}</p>
-                    <span className="text-[10px] opacity-75">{currentValidation.matchedDuqueName ? 'Par histórico forte' : 'Sem duque top 10'}</span>
-                  </div>
 
-                  {/* Moldura x Centro (Análise Avançada) */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.frameAndCenterBalance ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.frameCenterValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Moldura x Centro</span>
-                      {logicOptions.frameAndCenterBalance && (currentValidation.frameCenterValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">3M / 3C</span>)}
+                    {/* Faixa 20 a 50 */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.concentrate20to50 ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.count20to50Valid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Faixa 20–50</span>
+                        {logicOptions.concentrate20to50 && (currentValidation.count20to50Valid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">&ge; 50%</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.count20to50} dezenas</p>
+                      <span className="text-[10px] opacity-75">Miolo mais frequente</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.frameCount}M / {currentValidation.centerCount}C</p>
-                    <span className="text-[10px] opacity-75">Padrão de 76% dos sorteios</span>
-                  </div>
 
-                  {/* Primos & Fibonacci (Análise Avançada) */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.balancePrimesAndFibonacci ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.primesValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Primos & Fibo</span>
-                      {logicOptions.balancePrimesAndFibonacci && (currentValidation.primesValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">1 a 3</span>)}
+                    {/* Quadrantes */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.spreadDistribution ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.quadrantsValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Quadrantes</span>
+                        {logicOptions.spreadDistribution && (currentValidation.quadrantsValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">&ge; 3 quad.</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.quadrants.filter(q => q > 0).length} de 4</p>
+                      <span className="text-[10px] opacity-75">Espalhamento ideal</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.primesCount} Primos • {currentValidation.fibonacciCount} Fib</p>
-                    <span className="text-[10px] opacity-75">Equilíbrio numérico</span>
-                  </div>
 
-                  {/* Top Pareto 80/20 & Ciclo */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    !logicOptions.paretoTopSelection ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
-                    currentValidation.paretoValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Top Pareto & Ciclo</span>
-                      {logicOptions.paretoTopSelection && (currentValidation.paretoValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">1 a 3</span>)}
+                    {/* Consecutivas */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.max2Consecutive ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.consecutiveValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Seq. Consecutivas</span>
+                        {logicOptions.max2Consecutive && (currentValidation.consecutiveValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">Max 2</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.consecutiveSequences.length} seq.</p>
+                      <span className="text-[10px] opacity-75">Máx {currentValidation.maxConsecutive} seguidos</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.paretoCount} Pareto • {currentValidation.cycleMissingCount} Ciclo</p>
-                    <span className="text-[10px] opacity-75">Score Analítico: {currentValidation.advancedScore}%</span>
-                  </div>
 
-                  {/* Entropia de Shannon (Dispersão Orgânica) */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    currentValidation.entropyLabel !== 'Baixa' ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Entropia (Shannon)</span>
-                      {currentValidation.entropyLabel !== 'Baixa' ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">Dispersar</span>}
+                    {/* Finais Iguais */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.max2IdenticalEndings ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.endingsValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Finais Iguais</span>
+                        {logicOptions.max2IdenticalEndings && (currentValidation.endingsValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">Max 2</span>)}
+                      </div>
+                      <p className="text-base font-black">Máx {currentValidation.maxEndingCount}</p>
+                      <span className="text-[10px] opacity-75">Evita finais viciados</span>
                     </div>
-                    <p className="text-base font-black">{currentValidation.shannonEntropy} bits</p>
-                    <span className="text-[10px] opacity-75">{currentValidation.entropyLabel} Dispersão</span>
-                  </div>
 
-                  {/* Pressão de Atraso (Z-Score) */}
-                  <div className={`p-2.5 rounded-xl border transition-colors ${
-                    currentValidation.hasHighPressureDezena ? 'bg-blue-50/70 border-blue-200 text-blue-900' : 'bg-slate-50/70 border-slate-200 text-slate-700'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[10px] uppercase">Pressão de Atraso</span>
-                      <span className="text-[10px] font-bold text-blue-700">Z: {currentValidation.delayZScoreMax}</span>
+                    {/* Repetição do Anterior */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.repeat1to2 ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.repeatValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Repetição 1–2</span>
+                        {logicOptions.repeat1to2 && (currentValidation.repeatValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">1 ou 2</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.repeatedCount} dezenas</p>
+                      <span className="text-[10px] opacity-75">Padrão histórico</span>
                     </div>
-                    <p className="text-sm font-black truncate">{currentValidation.hasHighPressureDezena ? '⚡ Dezenas em Pressão' : 'Normalidade Histórica'}</p>
-                    <span className="text-[10px] opacity-75">μ=9.8 concursos</span>
+
+                    {/* Histórico Oficial (3.071 Concursos) */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.preferHistoricalHotNumbers ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.historicalHotValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Histórico (3.071)</span>
+                        {logicOptions.preferHistoricalHotNumbers && (currentValidation.historicalHotValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">2 a 4 Top</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.historicalHotCount} no Top 20</p>
+                      <span className="text-[10px] opacity-75">Média ~{currentValidation.historicalAverageDraws}x sorteios</span>
+                    </div>
+
+                    {/* Duque Histórico (Análise Avançada) */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.useAdvancedDuques ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.duquesValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-slate-50/70 border-slate-200 text-slate-600'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Duque Histórico</span>
+                        {logicOptions.useAdvancedDuques && (currentValidation.duquesValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] text-slate-400">Opcional</span>)}
+                      </div>
+                      <p className="text-sm font-black truncate">{currentValidation.matchedDuque ? `${currentValidation.matchedDuque[0].toString().padStart(2, '0')} - ${currentValidation.matchedDuque[1].toString().padStart(2, '0')}` : 'Nenhum'}</p>
+                      <span className="text-[10px] opacity-75">{currentValidation.matchedDuqueName ? 'Par histórico forte' : 'Sem duque top 10'}</span>
+                    </div>
+
+                    {/* Moldura x Centro (Análise Avançada) */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.frameAndCenterBalance ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.frameCenterValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Moldura x Centro</span>
+                        {logicOptions.frameAndCenterBalance && (currentValidation.frameCenterValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">3M / 3C</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.frameCount}M / {currentValidation.centerCount}C</p>
+                      <span className="text-[10px] opacity-75">Padrão de 76% dos sorteios</span>
+                    </div>
+
+                    {/* Primos & Fibonacci (Análise Avançada) */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.balancePrimesAndFibonacci ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.primesValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Primos & Fibo</span>
+                        {logicOptions.balancePrimesAndFibonacci && (currentValidation.primesValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">1 a 3</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.primesCount} Primos • {currentValidation.fibonacciCount} Fib</p>
+                      <span className="text-[10px] opacity-75">Equilíbrio numérico</span>
+                    </div>
+
+                    {/* Top Pareto 80/20 & Ciclo */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      !logicOptions.paretoTopSelection ? 'bg-slate-50/50 border-slate-200 text-slate-400' :
+                      currentValidation.paretoValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Top Pareto & Ciclo</span>
+                        {logicOptions.paretoTopSelection && (currentValidation.paretoValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">1 a 3</span>)}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.paretoCount} Pareto • {currentValidation.cycleMissingCount} Ciclo</p>
+                      <span className="text-[10px] opacity-75">Score Analítico: {currentValidation.advancedScore}%</span>
+                    </div>
+
+                    {/* Entropia de Shannon (Dispersão Orgânica) */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      currentValidation.entropyLabel !== 'Baixa' ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Entropia (Shannon)</span>
+                        {currentValidation.entropyLabel !== 'Baixa' ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-amber-600">Dispersar</span>}
+                      </div>
+                      <p className="text-base font-black">{currentValidation.shannonEntropy} bits</p>
+                      <span className="text-[10px] opacity-75">{currentValidation.entropyLabel} Dispersão</span>
+                    </div>
+
+                    {/* Pressão de Atraso (Z-Score) */}
+                    <div className={`p-2.5 rounded-xl border transition-colors ${
+                      currentValidation.hasHighPressureDezena ? 'bg-blue-50/70 border-blue-200 text-blue-900' : 'bg-slate-50/70 border-slate-200 text-slate-700'
+                    }`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px] uppercase">Pressão de Atraso</span>
+                        <span className="text-[10px] font-bold text-blue-700">Z: {currentValidation.delayZScoreMax}</span>
+                      </div>
+                      <p className="text-sm font-black truncate">{currentValidation.hasHighPressureDezena ? '⚡ Dezenas em Pressão' : 'Normalidade Histórica'}</p>
+                      <span className="text-[10px] opacity-75">μ=9.8 concursos</span>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Painel Dinâmico de Sugestões de Ajuste em Tempo Real & Diagnóstico Matemático */}
                 <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-50/90 via-teal-50/70 to-slate-50 border border-emerald-200 space-y-3">
@@ -1705,19 +2022,43 @@ const App: React.FC = () => {
             {/* Lado Direito: Geradores e Regras Selecionáveis */}
             <div className="lg:col-span-4 space-y-6">
               {/* Card 1: Motor com IA + Zona de Ouro */}
-              <div className="bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900 rounded-3xl p-5 sm:p-6 text-white shadow-lg relative overflow-hidden">
+              <div className={`rounded-3xl p-5 sm:p-6 text-white shadow-lg relative overflow-hidden ${
+                currentLottery === 'lotofacil'
+                  ? 'bg-gradient-to-br from-purple-800 via-fuchsia-800 to-indigo-950'
+                  : currentLottery === 'maismilionaria'
+                  ? 'bg-gradient-to-br from-amber-800 via-yellow-900 to-slate-900'
+                  : 'bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900'
+              }`}>
                 <div className="relative z-10 space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2.5 py-1 bg-white/15 rounded-full text-emerald-200">
-                      <Sparkles size={13} className="mr-1 text-emerald-300" /> Inteligência Artificial
+                    <span className="inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2.5 py-1 bg-white/15 rounded-full text-white">
+                      <Sparkles size={13} className="mr-1 text-yellow-300" /> Inteligência Artificial
                     </span>
-                    <span className="text-[10px] text-emerald-200 font-bold">Gemini + Search</span>
+                    <span className="text-[10px] text-white/80 font-bold">Gemini + Search</span>
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-black tracking-tight">Gerar na Zona de Ouro</h3>
-                    <p className="text-emerald-100/80 text-xs leading-relaxed mt-1">
-                      A IA consulta todos os sorteios oficiais, analisa a densidade da <strong>Zona de Ouro (160–240)</strong> e integra obrigatoriamente o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> ({latestOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) em todas as combinações geradas.
+                    <h3 className="text-lg font-black tracking-tight">
+                      {currentLottery === 'lotofacil'
+                        ? 'Zona de Ouro Lotofácil (180–220)'
+                        : currentLottery === 'maismilionaria'
+                        ? 'Zona de Ouro +Milionária (130–175)'
+                        : 'Gerar na Zona de Ouro (160–240)'}
+                    </h3>
+                    <p className="text-white/80 text-xs leading-relaxed mt-1">
+                      {currentLottery === 'lotofacil' ? (
+                        <>
+                          A IA analisa os 3.350 concursos oficiais da Lotofácil, foca na <strong>Moldura (9–11)</strong>, <strong>Soma (180–220)</strong> e integra as <strong>Repetidas do Concurso #{activeOfficialDraw.contestNumber}</strong> ({activeOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) em 15 dezenas com alta afinidade.
+                        </>
+                      ) : currentLottery === 'maismilionaria' ? (
+                        <>
+                          A IA consulta todos os sorteios oficiais da +Milionária, analisa a <strong>Zona de Ouro (130–175)</strong> e integra o <strong>Concurso #{activeOfficialDraw.contestNumber}</strong> com os 2 Trevos mais prováveis.
+                        </>
+                      ) : (
+                        <>
+                          A IA consulta todos os sorteios oficiais, analisa a densidade da <strong>Zona de Ouro (160–240)</strong> e integra obrigatoriamente o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> ({latestOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) em todas as combinações geradas.
+                        </>
+                      )}
                     </p>
                   </div>
 
@@ -1725,21 +2066,37 @@ const App: React.FC = () => {
                     type="button"
                     onClick={generateAI} 
                     disabled={isLoading || isBatchLoading} 
-                    className="w-full bg-white text-emerald-900 py-3.5 px-4 rounded-2xl font-black shadow-md hover:bg-emerald-50 active:scale-[0.98] transition-all flex flex-col items-center justify-center disabled:opacity-75 cursor-pointer"
+                    className={`w-full bg-white py-3.5 px-4 rounded-2xl font-black shadow-md hover:bg-slate-50 active:scale-[0.98] transition-all flex flex-col items-center justify-center disabled:opacity-75 cursor-pointer ${
+                      currentLottery === 'lotofacil'
+                        ? 'text-purple-900'
+                        : currentLottery === 'maismilionaria'
+                        ? 'text-amber-950'
+                        : 'text-emerald-900'
+                    }`}
                   >
                     {isLoading ? (
                       <div className="flex items-center space-x-2 py-1">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-800"></div>
+                        <div className={`animate-spin rounded-full h-4 w-4 border-b-2 ${
+                          currentLottery === 'lotofacil' ? 'border-purple-800' : 'border-emerald-800'
+                        }`}></div>
                         <span className="text-xs font-bold uppercase">{loadingStatus}</span>
                       </div>
                     ) : (
                       <>
                         <div className="flex items-center space-x-2 text-sm">
-                          <Sparkles size={17} className="text-emerald-600" />
-                          <span>GERAR 1 JOGO COM IA</span>
+                          <Sparkles size={17} className={currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'} />
+                          <span>
+                            {currentLottery === 'lotofacil'
+                              ? 'GERAR 1 JOGO LOTOFÁCIL COM IA'
+                              : currentLottery === 'maismilionaria'
+                              ? 'GERAR 1 JOGO +MILIONÁRIA COM IA'
+                              : 'GERAR 1 JOGO COM IA'}
+                          </span>
                         </div>
-                        <span className="text-[9px] text-emerald-600 font-bold uppercase mt-0.5">
-                          Aplica regras ativas & salva no histórico
+                        <span className={`text-[9px] font-bold uppercase mt-0.5 ${
+                          currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'
+                        }`}>
+                          {currentLottery === 'lotofacil' ? '15 dezenas calibradas na moldura & soma' : 'Aplica regras ativas & salva no histórico'}
                         </span>
                       </>
                     )}
@@ -1749,14 +2106,18 @@ const App: React.FC = () => {
                     type="button"
                     onClick={generateBatchAI} 
                     disabled={isLoading || isBatchLoading} 
-                    className="w-full bg-emerald-600/60 hover:bg-emerald-600 text-white border border-emerald-400/30 py-3 px-4 rounded-2xl font-bold transition-all flex items-center justify-center space-x-2 text-xs cursor-pointer disabled:opacity-50"
+                    className="w-full bg-white/20 hover:bg-white/30 text-white border border-white/25 py-3 px-4 rounded-2xl font-bold transition-all flex items-center justify-center space-x-2 text-xs cursor-pointer disabled:opacity-50"
                   >
                     {isBatchLoading ? (
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                     ) : (
                       <>
                         <Layers size={16} />
-                        <span>COMBO 5 JOGOS VARIADOS</span>
+                        <span>
+                          {currentLottery === 'lotofacil'
+                            ? 'COMBO 5 JOGOS LOTOFÁCIL (15 DEZENAS)'
+                            : 'COMBO 5 JOGOS VARIADOS'}
+                        </span>
                       </>
                     )}
                   </button>
@@ -1764,29 +2125,59 @@ const App: React.FC = () => {
               </div>
 
               {/* Card 2: Gerador Instantâneo via Regras Locais & Análise Avançada */}
-              <div className="bg-white rounded-3xl p-5 border border-emerald-200/80 shadow-sm space-y-4 relative overflow-hidden">
+              <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4 relative overflow-hidden">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-sm">
+                    <div className={`w-8 h-8 rounded-xl text-white flex items-center justify-center shadow-sm ${
+                      currentLottery === 'lotofacil'
+                        ? 'bg-purple-600'
+                        : currentLottery === 'maismilionaria'
+                        ? 'bg-amber-600'
+                        : 'bg-emerald-600'
+                    }`}>
                       <Zap size={18} />
                     </div>
                     <div>
-                      <h3 className="text-sm font-black text-emerald-950 flex items-center space-x-1.5">
+                      <h3 className="text-sm font-black text-slate-900 flex items-center space-x-1.5">
                         <span>Geração Rápida pelas Regras</span>
                       </h3>
-                      <span className="text-[10px] text-emerald-700 font-bold flex items-center space-x-1">
-                        <Sparkles size={11} className="text-emerald-600" />
-                        <span>Motor de Análise Avançada (3.071 Concursos)</span>
+                      <span className={`text-[10px] font-bold flex items-center space-x-1 ${
+                        currentLottery === 'lotofacil' ? 'text-purple-700' : 'text-emerald-700'
+                      }`}>
+                        <Sparkles size={11} className={currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'} />
+                        <span>
+                          {currentLottery === 'lotofacil'
+                            ? 'Motor Oficial Lotofácil (3.350 Concursos)'
+                            : currentLottery === 'maismilionaria'
+                            ? 'Motor Oficial +Milionária (401 Concursos)'
+                            : 'Motor de Análise Avançada (3.071 Concursos)'}
+                        </span>
                       </span>
                     </div>
                   </div>
-                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/70 border border-emerald-200 px-2 py-0.5 rounded-full">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    currentLottery === 'lotofacil'
+                      ? 'text-purple-800 bg-purple-50 border-purple-200'
+                      : 'text-emerald-800 bg-emerald-100/70 border border-emerald-200'
+                  }`}>
                     Zero Espera
                   </span>
                 </div>
 
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> (repetição provável e atraso 0), <strong>Duques Históricos</strong>, <strong>Moldura/Centro</strong>, <strong>Primos &amp; Fibonacci</strong> e <strong>Ciclo Atual</strong> da Mega-Sena.
+                  {currentLottery === 'lotofacil' ? (
+                    <>
+                      Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{activeOfficialDraw.contestNumber}</strong> (repetição de 8 a 10 dezenas), <strong>Moldura (9 a 11)</strong>, <strong>Primos &amp; Fibonacci</strong> e <strong>Equilíbrio Par/Ímpar (7P/8I ou 8P/7I)</strong> da Lotofácil.
+                    </>
+                  ) : currentLottery === 'maismilionaria' ? (
+                    <>
+                      Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{activeOfficialDraw.contestNumber}</strong> da +Milionária, miolo estatístico e 2 trevos quentes.
+                    </>
+                  ) : (
+                    <>
+                      Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> (repetição provável e atraso 0), <strong>Duques Históricos</strong>, <strong>Moldura/Centro</strong>, <strong>Primos &amp; Fibonacci</strong> e <strong>Ciclo Atual</strong> da Mega-Sena.
+                    </>
+                  )}
                 </p>
 
                 {/* Seletor de Estratégia de Cálculo Matemático */}
@@ -2497,15 +2888,19 @@ const App: React.FC = () => {
           <div className="bg-white rounded-3xl shadow-sm border border-emerald-100 p-4 sm:p-6 md:p-8 space-y-6">
             <div>
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center space-x-2">
-                <Award size={24} className={currentLottery === 'maismilionaria' ? 'text-amber-600' : 'text-emerald-600'} />
+                <Award size={24} className={currentLottery === 'lotofacil' ? 'text-purple-600' : (currentLottery === 'maismilionaria' ? 'text-amber-600' : 'text-emerald-600')} />
                 <span>
-                  {currentLottery === 'maismilionaria' 
+                  {currentLottery === 'lotofacil'
+                    ? 'Conferidor Automático: Lotofácil (01 a 25)'
+                    : currentLottery === 'maismilionaria' 
                     ? 'Conferidor Automático: +Milionária (01 a 50 + Trevos)' 
                     : 'Conferidor Automático: Mega-Sena (01 a 60)'}
                 </span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                {currentLottery === 'maismilionaria'
+                {currentLottery === 'lotofacil'
+                  ? 'Verifique instantaneamente todas as suas apostas salvas da Lotofácil contra as 5 faixas oficiais (15, 14, 13, 12 e 11 acertos) e contabilize o total acumulado em prêmios.'
+                  : currentLottery === 'maismilionaria'
                   ? 'Verifique instantaneamente todas as suas apostas salvas da +Milionária contra as 10 faixas oficiais de premiação da Caixa.'
                   : 'Verifique instantaneamente todas as suas apostas salvas da Mega-Sena (Sena, Quina e Quadra).'}
               </p>
@@ -2513,14 +2908,16 @@ const App: React.FC = () => {
 
             {/* Painel do Concurso de Referência Oficial */}
             <div className={`text-white p-5 sm:p-6 rounded-3xl shadow-md space-y-4 ${
-              currentLottery === 'maismilionaria'
+              currentLottery === 'lotofacil'
+                ? 'bg-gradient-to-br from-purple-950 via-slate-900 to-fuchsia-950 border border-purple-800'
+                : currentLottery === 'maismilionaria'
                 ? 'bg-gradient-to-br from-amber-950 via-slate-900 to-yellow-950 border border-amber-800'
                 : 'bg-gradient-to-br from-emerald-900 to-teal-950 border border-emerald-800'
             }`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center space-x-2">
                   <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${
-                    currentLottery === 'maismilionaria' ? 'bg-amber-400' : 'bg-emerald-400'
+                    currentLottery === 'lotofacil' ? 'bg-purple-400' : (currentLottery === 'maismilionaria' ? 'bg-amber-400' : 'bg-emerald-400')
                   }`}></span>
                   <span className="text-xs font-extrabold uppercase tracking-widest text-slate-200">
                     Sorteio de Referência Caixa • Concurso #{activeOfficialDraw.contestNumber} ({activeOfficialDraw.date})
@@ -2548,13 +2945,13 @@ const App: React.FC = () => {
                 <div className="bg-white/10 p-3.5 rounded-2xl space-y-3">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-100 block">
-                      Digite as 6 dezenas sorteadas (01 a {currentLottery === 'maismilionaria' ? '50' : '60'}):
+                      Digite as {currentLottery === 'lotofacil' ? '15 dezenas sorteadas (01 a 25)' : `6 dezenas sorteadas (01 a ${currentLottery === 'maismilionaria' ? '50' : '60'})`}:
                     </label>
                     <input 
                       type="text" 
                       value={tempRefInput} 
                       onChange={(e) => setTempRefInput(e.target.value)}
-                      placeholder={currentLottery === 'maismilionaria' ? "Ex: 05, 14, 23, 31, 42, 48" : "Ex: 05, 12, 26, 33, 44, 58"} 
+                      placeholder={currentLottery === 'lotofacil' ? "Ex: 01, 02, 05, 06, 09, 10, 11, 13, 14, 17, 18, 20, 21, 23, 25" : (currentLottery === 'maismilionaria' ? "Ex: 05, 14, 23, 31, 42, 48" : "Ex: 05, 12, 26, 33, 44, 58")} 
                       className="w-full px-3 py-2 rounded-xl bg-white text-slate-900 font-bold text-sm outline-none"
                     />
                   </div>
@@ -2578,7 +2975,11 @@ const App: React.FC = () => {
                     type="button"
                     onClick={handleSaveReferenceDraw}
                     className={`w-full text-white px-4 py-2.5 rounded-xl font-black text-xs transition-colors cursor-pointer shadow-sm ${
-                      currentLottery === 'maismilionaria' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                      currentLottery === 'lotofacil'
+                        ? 'bg-purple-600 hover:bg-purple-700'
+                        : currentLottery === 'maismilionaria' 
+                        ? 'bg-amber-600 hover:bg-amber-700' 
+                        : 'bg-emerald-600 hover:bg-emerald-700'
                     }`}
                   >
                     CONFERIR COM ESTE RESULTADO
@@ -2590,7 +2991,11 @@ const App: React.FC = () => {
                     {activeRefNumbers.map(n => (
                       <span 
                         key={n} 
-                        className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 font-black flex items-center justify-center text-sm sm:text-base shadow-md border-2 border-yellow-300"
+                        className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full font-black flex items-center justify-center text-sm shadow-md border-2 ${
+                          currentLottery === 'lotofacil'
+                            ? 'bg-gradient-to-br from-purple-400 to-fuchsia-500 text-purple-950 border-purple-300'
+                            : 'bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-950 border-yellow-300'
+                        }`}
                       >
                         {n.toString().padStart(2, '0')}
                       </span>
@@ -2614,14 +3019,72 @@ const App: React.FC = () => {
               )}
 
               <p className="text-[11px] text-slate-300">
-                {currentLottery === 'maismilionaria'
+                {currentLottery === 'lotofacil'
+                  ? 'Resultado oficial da Lotofácil usado para confrontar seus bilhetes e calcular os acertos nas 5 faixas (15, 14, 13, 12 e 11 acertos).'
+                  : currentLottery === 'maismilionaria'
                   ? 'Resultado oficial da +Milionária usado para confrontar seus bilhetes e identificar prêmios nas 10 faixas oficiais.'
                   : 'Resultado oficial da Mega-Sena usado para confrontar seus bilhetes e orientar a regra de repetição de 1–2 dezenas.'}
               </p>
             </div>
 
             {/* Placar de Premiações adaptativo */}
-            {currentLottery === 'maismilionaria' ? (
+            {currentLottery === 'lotofacil' ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="p-3.5 rounded-2xl border border-purple-300 bg-purple-50/90 text-center">
+                    <span className="text-[10px] font-black uppercase text-purple-900 tracking-wider">15 Acertos</span>
+                    <p className="text-2xl sm:text-3xl font-black text-purple-950 mt-1">{(checkerStats as any).hits15 || 0}</p>
+                    <span className="text-[10px] text-purple-700 font-bold">Prêmio Máximo</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-fuchsia-300 bg-fuchsia-50/80 text-center">
+                    <span className="text-[10px] font-black uppercase text-fuchsia-900 tracking-wider">14 Acertos</span>
+                    <p className="text-2xl sm:text-3xl font-black text-fuchsia-950 mt-1">{(checkerStats as any).hits14 || 0}</p>
+                    <span className="text-[10px] text-fuchsia-700 font-medium">2ª Faixa Oficial</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-emerald-300 bg-emerald-50/80 text-center">
+                    <span className="text-[10px] font-black uppercase text-emerald-900 tracking-wider">13 Acertos (R$ 30)</span>
+                    <p className="text-2xl sm:text-3xl font-black text-emerald-950 mt-1">{(checkerStats as any).hits13 || 0}</p>
+                    <span className="text-[10px] text-emerald-700 font-semibold">Prêmio Fixo</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-blue-300 bg-blue-50/80 text-center">
+                    <span className="text-[10px] font-black uppercase text-blue-900 tracking-wider">12 Acertos (R$ 12)</span>
+                    <p className="text-2xl sm:text-3xl font-black text-blue-950 mt-1">{(checkerStats as any).hits12 || 0}</p>
+                    <span className="text-[10px] text-blue-700 font-semibold">Prêmio Fixo</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-indigo-300 bg-indigo-50/80 text-center col-span-2 sm:col-span-1">
+                    <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider">11 Acertos (R$ 6)</span>
+                    <p className="text-2xl sm:text-3xl font-black text-indigo-950 mt-1">{(checkerStats as any).hits11 || 0}</p>
+                    <span className="text-[10px] text-indigo-700 font-semibold">Prêmio Fixo</span>
+                  </div>
+                </div>
+
+                {/* Total Conquistado em Prêmios Fixos da Lotofácil */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-50 via-fuchsia-50 to-emerald-50 border border-purple-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center font-black text-sm shadow-sm flex-shrink-0">
+                      💰
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-purple-950">
+                        Total Conquistado em Prêmios Fixos (11, 12 e 13 Acertos)
+                      </h4>
+                      <p className="text-[11px] text-slate-600">
+                        Soma automática dos valores garantidos pela Caixa Econômica Federal em seus jogos conferidos.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-lg sm:text-xl font-black text-emerald-700">
+                      R$ {((checkerStats as any).totalPrizeFixed || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : currentLottery === 'maismilionaria' ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-4 rounded-2xl border border-amber-300 bg-amber-50/80 text-center">
                   <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Faixa 1 (6 + 2 Trevos)</span>
