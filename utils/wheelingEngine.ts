@@ -1,35 +1,31 @@
 /**
  * Motor Matemático de Fechamentos e Desdobramentos Econômicos (Wheeling System)
- * Implementa matrizes de cobertura combinatorial com garantia matemática de premiação:
- * - Garante Quadra acertando 4 dezenas
- * - Garante Quadra acertando 6 dezenas (Super Econômico)
- * - Garante Quina acertando 5 dezenas
- * - Garante Quina acertando 6 dezenas
- * - Desdobramento Total (100% das combinações)
+ * Implementa matrizes de cobertura combinatorial com garantia matemática de premiação
+ * para Mega-Sena, +Milionária e Lotofácil.
  */
 
 import { combinations } from './probabilityEngine';
 import { LotteryType } from '../types';
 
 export type WheelingGuarantee = 
-  | 'quadra_if_4' // Garante Quadra se acertar 4
-  | 'quadra_if_6' // Garante Quadra se acertar 6 (Super Econômico)
-  | 'quina_if_5'  // Garante Quina se acertar 5
-  | 'quina_if_6'  // Garante Quina se acertar 6 (Econômico)
-  | 'total';      // Fechamento Total (todas as combinações C(n, 6))
+  | 'quadra_if_4' // Garante Quadra se acertar 4 (Mega/Milionária) ou 13 se 14 (Lotofácil)
+  | 'quadra_if_6' // Garante Quadra se acertar 6 (Super Econômico) ou 14 se 15 (Lotofácil)
+  | 'quina_if_5'  // Garante Quina se acertar 5 (Mega/Milionária) ou 14 se 14 (Lotofácil)
+  | 'quina_if_6'  // Garante Quina se acertar 6
+  | 'total';      // Fechamento Total (todas as combinações)
 
 export interface WheelingPlan {
   id: WheelingGuarantee;
   name: string;
   shortLabel: string;
-  targetGuarantee: 'Quadra' | 'Quina' | 'Sena';
+  targetGuarantee: 'Quadra' | 'Quina' | 'Sena' | '14 Acertos' | '13 Acertos' | '15 Acertos';
   requiredHits: number;
   guaranteedHits: number;
   description: string;
   recommended: boolean;
 }
 
-export const WHEELING_PLANS: WheelingPlan[] = [
+export const WHEELING_PLANS_MEGA: WheelingPlan[] = [
   {
     id: 'quadra_if_6',
     name: 'Fechamento Super Econômico (Quadra se acertar 6)',
@@ -37,7 +33,7 @@ export const WHEELING_PLANS: WheelingPlan[] = [
     targetGuarantee: 'Quadra',
     requiredHits: 6,
     guaranteedHits: 4,
-    description: 'Menor investimento possível. Se as 6 dezenas sorteadas estiverem entre as suas escolhidas, garante 100% pelo menos uma Quadra (com chances de Quina e Sena).',
+    description: 'Menor investimento possível. Se as 6 dezenas sorteadas estiverem entre as suas escolhidas, garante 100% pelo menos uma Quadra.',
     recommended: true
   },
   {
@@ -62,22 +58,65 @@ export const WHEELING_PLANS: WheelingPlan[] = [
   },
   {
     id: 'quina_if_5',
-    name: 'Fechamento Premium de Quina (Quina se acertar 5)',
+    name: 'Fechamento Blindado de Quina (Quina se acertar 5)',
     shortLabel: 'Garante Quina (5 acertos)',
     targetGuarantee: 'Quina',
     requiredHits: 5,
     guaranteedHits: 5,
-    description: 'Garante Quina acertando apenas 5 dezenas do sorteio oficial.',
+    description: 'Basta acertar 5 das dezenas do grupo para garantir 100% Quina.',
     recommended: false
   },
   {
     id: 'total',
-    name: 'Desdobramento Total (100% de Todas as Combinações)',
+    name: 'Desdobramento Total Caixa (100% Cobertura)',
     shortLabel: 'Fechamento Total C(n, 6)',
     targetGuarantee: 'Sena',
     requiredHits: 6,
     guaranteedHits: 6,
     description: 'Gera todas as combinações matemáticas possíveis do grupo. Equivalente à aposta múltipla oficial da Caixa.',
+    recommended: false
+  }
+];
+
+export const WHEELING_PLANS_LOTOFACIL: WheelingPlan[] = [
+  {
+    id: 'quadra_if_6',
+    name: 'Fechamento Econômico Lotofácil (14 se acertar 15)',
+    shortLabel: 'Garante 14 (15 acertos)',
+    targetGuarantee: '14 Acertos',
+    requiredHits: 15,
+    guaranteedHits: 14,
+    description: 'Se as 15 dezenas sorteadas estiverem entre o seu grupo selecionado, garante matematicamente pelo menos um bilhete com 14 acertos.',
+    recommended: true
+  },
+  {
+    id: 'quadra_if_4',
+    name: 'Fechamento de Ponto Fixo (13 se acertar 14)',
+    shortLabel: 'Garante 13 (14 acertos)',
+    targetGuarantee: '13 Acertos',
+    requiredHits: 14,
+    guaranteedHits: 13,
+    description: 'Basta acertar 14 dezenas dentre as escolhidas para garantir premiações de 13 e 12 pontos com baixo custo.',
+    recommended: false
+  },
+  {
+    id: 'quina_if_5',
+    name: 'Fechamento Ouro Lotofácil (14 se acertar 14)',
+    shortLabel: 'Garante 14 (14 acertos)',
+    targetGuarantee: '14 Acertos',
+    requiredHits: 14,
+    guaranteedHits: 14,
+    description: 'Cobertura reforçada: garante 14 pontos acertando 14 dezenas do seu pool.',
+    recommended: false
+  },
+  {
+    id: 'total',
+    name: 'Desdobramento Total Lotofácil (100% C(n, 15))',
+    shortLabel: 'Fechamento Total C(n, 15)',
+    targetGuarantee: '15 Acertos',
+    requiredHits: 15,
+    guaranteedHits: 15,
+    description: 'Gera todas as combinações de 15 dezenas do grupo.',
     recommended: false
   }
 ];
@@ -117,42 +156,38 @@ function getCombinations(arr: number[], k: number): number[][] {
 
 /**
  * Algoritmo Guloso Otimizado de Cobertura de Design Combinatorial (Set Cover / Wheeling)
- * Encontra um conjunto mínimo de bilhetes de 6 dezenas que cobre todos os subconjuntos exigidos.
  */
 function buildCoveringWheel(
   pool: number[],
-  requiredSubSize: number, // Ex: 4 para garantir Quadra
-  maxGamesLimit: number = 100
+  ticketSize: number,
+  requiredSubSize: number,
+  maxGamesLimit: number = 80
 ): number[][] {
   const n = pool.length;
-  if (n <= 6) return [pool.slice(0, 6)];
+  if (n <= ticketSize) return [pool.slice(0, ticketSize)];
 
-  // Gera todas as combinações de 6 números possíveis a partir do pool
-  const all6Combos = getCombinations(pool, 6);
+  // Gera todas as combinações de tamanho ticketSize
+  const allTicketCombos = getCombinations(pool, ticketSize);
 
-  // Se o número de combinações já for pequeno, retorna todas
-  if (all6Combos.length <= maxGamesLimit && requiredSubSize === 6) {
-    return all6Combos;
+  if (allTicketCombos.length <= maxGamesLimit && requiredSubSize === ticketSize) {
+    return allTicketCombos;
   }
 
-  // Gera todos os subconjuntos alvos que precisam ser cobertos
+  // Gera os subconjuntos alvos
   const targetSubsets = getCombinations(pool, requiredSubSize);
   const targetKeyToIndex = new Map<string, number>();
   targetSubsets.forEach((sub, idx) => {
     targetKeyToIndex.set(sub.sort((a, b) => a - b).join('-'), idx);
   });
 
-  const uncoveredTargets = new Set<number>();
-  for (let i = 0; i < targetSubsets.length; i++) {
-    uncoveredTargets.add(i);
-  }
+  const uncoveredTargets = new Set<number>(targetSubsets.map((_, i) => i));
 
-  // Mapeia quais targets cada 6-combo cobre
-  const comboToTargetIndices = all6Combos.map(combo => {
-    const subCombos = getCombinations(combo, requiredSubSize);
+  // Mapa de cada jogo para os subconjuntos que ele cobre
+  const comboToTargetIndices: number[][] = allTicketCombos.map(combo => {
+    const subs = getCombinations(combo, requiredSubSize);
     const indices: number[] = [];
-    subCombos.forEach(sc => {
-      const key = sc.sort((a, b) => a - b).join('-');
+    subs.forEach(s => {
+      const key = s.sort((a, b) => a - b).join('-');
       const idx = targetKeyToIndex.get(key);
       if (idx !== undefined) indices.push(idx);
     });
@@ -162,12 +197,11 @@ function buildCoveringWheel(
   const selectedGames: number[][] = [];
   const selectedComboIndices = new Set<number>();
 
-  // Loop Guloso (Greedy): a cada passo escolhe o jogo que cobre o maior número de targets ainda não cobertos
   while (uncoveredTargets.size > 0 && selectedGames.length < maxGamesLimit) {
     let bestComboIdx = -1;
     let maxCoverCount = -1;
 
-    for (let i = 0; i < all6Combos.length; i++) {
+    for (let i = 0; i < allTicketCombos.length; i++) {
       if (selectedComboIndices.has(i)) continue;
       const targets = comboToTargetIndices[i];
       let coverCount = 0;
@@ -186,12 +220,16 @@ function buildCoveringWheel(
     }
 
     selectedComboIndices.add(bestComboIdx);
-    selectedGames.push(all6Combos[bestComboIdx]);
+    selectedGames.push(allTicketCombos[bestComboIdx]);
 
-    // Remove targets cobertos
     for (const t of comboToTargetIndices[bestComboIdx]) {
       uncoveredTargets.delete(t);
     }
+  }
+
+  // Se por limite ainda faltar, garante que o primeiro ticket foi adicionado
+  if (selectedGames.length === 0 && allTicketCombos.length > 0) {
+    selectedGames.push(allTicketCombos[0]);
   }
 
   return selectedGames;
@@ -207,16 +245,19 @@ export function generateWheeling(
 ): WheelingResult {
   const sortedPool = Array.from(new Set(poolNumbers)).sort((a, b) => a - b);
   const poolSize = sortedPool.length;
+  const isLotofacil = lottery === 'lotofacil';
   const isMaisMilionaria = lottery === 'maismilionaria';
-  const singleTicketPrice = isMaisMilionaria ? 6.0 : 5.0;
+  
+  const ticketSize = isLotofacil ? 15 : 6;
+  const singleTicketPrice = isLotofacil ? 3.0 : (isMaisMilionaria ? 6.0 : 5.0);
 
-  // Custo oficial da aposta múltipla na Caixa Econômica (C(n, 6) * preço)
-  const totalPossibleCombos = combinations(poolSize, 6);
+  // Custo oficial da aposta múltipla na Caixa Econômica (C(n, ticketSize) * preço)
+  const totalPossibleCombos = combinations(poolSize, ticketSize);
   const officialMultipleCost = totalPossibleCombos * singleTicketPrice;
 
   let games: number[][] = [];
 
-  if (poolSize < 6) {
+  if (poolSize < ticketSize) {
     return {
       poolNumbers: sortedPool,
       poolSize,
@@ -231,22 +272,31 @@ export function generateWheeling(
     };
   }
 
-  if (poolSize === 6) {
+  if (poolSize === ticketSize) {
     games = [sortedPool];
   } else if (guarantee === 'total') {
-    games = getCombinations(sortedPool, 6);
-  } else if (guarantee === 'quadra_if_6') {
-    // Garante Quadra se acertar 6 (Subtamanho 4 com cobertura balanceada reduzida)
-    games = buildCoveringWheel(sortedPool, 4, Math.min(25, Math.ceil(totalPossibleCombos * 0.15)));
-  } else if (guarantee === 'quadra_if_4') {
-    // Garante Quadra se acertar 4
-    games = buildCoveringWheel(sortedPool, 4, 60);
-  } else if (guarantee === 'quina_if_6') {
-    // Garante Quina se acertar 6
-    games = buildCoveringWheel(sortedPool, 5, Math.min(40, Math.ceil(totalPossibleCombos * 0.35)));
-  } else if (guarantee === 'quina_if_5') {
-    // Garante Quina se acertar 5
-    games = buildCoveringWheel(sortedPool, 5, 80);
+    games = getCombinations(sortedPool, ticketSize);
+  } else if (isLotofacil) {
+    if (guarantee === 'quadra_if_6') {
+      // Garante 14 se acertar 15
+      games = buildCoveringWheel(sortedPool, 15, 14, Math.min(24, Math.ceil(totalPossibleCombos * 0.18)));
+    } else if (guarantee === 'quadra_if_4') {
+      // Garante 13 se acertar 14
+      games = buildCoveringWheel(sortedPool, 15, 13, Math.min(18, Math.ceil(totalPossibleCombos * 0.12)));
+    } else {
+      games = buildCoveringWheel(sortedPool, 15, 14, 30);
+    }
+  } else {
+    // Mega-Sena ou +Milionária (ticket de 6 números)
+    if (guarantee === 'quadra_if_6') {
+      games = buildCoveringWheel(sortedPool, 6, 4, Math.min(25, Math.ceil(totalPossibleCombos * 0.15)));
+    } else if (guarantee === 'quadra_if_4') {
+      games = buildCoveringWheel(sortedPool, 6, 4, 60);
+    } else if (guarantee === 'quina_if_6') {
+      games = buildCoveringWheel(sortedPool, 6, 5, Math.min(40, Math.ceil(totalPossibleCombos * 0.35)));
+    } else if (guarantee === 'quina_if_5') {
+      games = buildCoveringWheel(sortedPool, 6, 5, 80);
+    }
   }
 
   const gamesCount = games.length;
@@ -271,27 +321,41 @@ export function generateWheeling(
 }
 
 /**
- * Testa um resultado oficial (ou números sorteados) contra os jogos gerados pelo fechamento
+ * Testa um resultado oficial contra os jogos gerados pelo fechamento
  */
 export function testWheelingAgainstDraw(
   wheelGames: number[][],
-  drawnNumbers: number[]
+  drawnNumbers: number[],
+  lottery: LotteryType = 'megasena'
 ) {
   const drawnSet = new Set(drawnNumbers);
-  let senaCount = 0;
-  let quinaCount = 0;
-  let quadraCount = 0;
-  let ternoCount = 0;
+  const isLotofacil = lottery === 'lotofacil';
+
+  let tier1Count = 0; // Sena ou 15 acertos
+  let tier2Count = 0; // Quina ou 14 acertos
+  let tier3Count = 0; // Quadra ou 13 acertos
+  let tier4Count = 0; // Terno ou 12 acertos
+  let tier5Count = 0; // 11 acertos
   let maxHits = 0;
 
   const hitsPerGame = wheelGames.map((game, idx) => {
     const hits = game.filter(n => drawnSet.has(n));
     const count = hits.length;
     if (count > maxHits) maxHits = count;
-    if (count === 6) senaCount++;
-    else if (count === 5) quinaCount++;
-    else if (count === 4) quadraCount++;
-    else if (count === 3) ternoCount++;
+
+    if (isLotofacil) {
+      if (count === 15) tier1Count++;
+      else if (count === 14) tier2Count++;
+      else if (count === 13) tier3Count++;
+      else if (count === 12) tier4Count++;
+      else if (count === 11) tier5Count++;
+    } else {
+      if (count === 6) tier1Count++;
+      else if (count === 5) tier2Count++;
+      else if (count === 4) tier3Count++;
+      else if (count === 3) tier4Count++;
+    }
+
     return {
       gameIndex: idx,
       game,
@@ -302,11 +366,15 @@ export function testWheelingAgainstDraw(
 
   return {
     maxHits,
-    senaCount,
-    quinaCount,
-    quadraCount,
-    ternoCount,
-    totalPrized: senaCount + quinaCount + quadraCount,
+    senaCount: tier1Count,
+    quinaCount: tier2Count,
+    quadraCount: tier3Count,
+    ternoCount: tier4Count,
+    elevenCount: tier5Count,
+    totalPrized: tier1Count + tier2Count + tier3Count + (isLotofacil ? tier4Count + tier5Count : 0),
     hitsPerGame
   };
 }
+
+// Export default WHEELING_PLANS adaptável
+export const WHEELING_PLANS = WHEELING_PLANS_MEGA;

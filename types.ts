@@ -83,6 +83,8 @@ export interface GeneratorLogic {
   rowAndColDispersion?: boolean;
   // Estratégia de Cálculo Matemático
   calculationStrategy?: CalculationStrategy;
+  // Filtro de Plausibilidade Histórica (Centralizar nos clusters de máxima densidade)
+  strictPlausibilityFilter?: boolean;
 }
 
 export interface OfficialDrawResult {

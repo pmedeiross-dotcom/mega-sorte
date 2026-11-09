@@ -19,12 +19,14 @@ import {
   generateWheeling, 
   testWheelingAgainstDraw, 
   WHEELING_PLANS, 
+  WHEELING_PLANS_LOTOFACIL,
   WheelingGuarantee, 
   WheelingResult 
 } from '../utils/wheelingEngine';
 import { OfficialDrawResult, LotteryType } from '../types';
 import { TOP_10_HISTORICAL } from '../utils/megaSenaOfficialStats';
 import { TOP_10_MAIS_MILIONARIA } from '../utils/maisMilionariaOfficialStats';
+import { TOP_10_LOTOFACIL } from '../utils/lotofacilRules';
 
 interface WheelingSimulatorViewProps {
   latestDraw?: OfficialDrawResult;
@@ -39,11 +41,18 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
 }) => {
   const activeLottery: LotteryType = (lottery as LotteryType) || 'megasena';
   const isMaisMilionaria = activeLottery === 'maismilionaria';
-  const maxLimit = isMaisMilionaria ? 50 : 60;
-  const singleTicketPrice = isMaisMilionaria ? 6.0 : 5.0;
+  const isLotofacil = activeLottery === 'lotofacil';
+  const maxLimit = isLotofacil ? 25 : (isMaisMilionaria ? 50 : 60);
+  const minPoolSize = isLotofacil ? 16 : 7;
+  const maxPoolSize = isLotofacil ? 22 : 16;
+  const plans = isLotofacil ? WHEELING_PLANS_LOTOFACIL : WHEELING_PLANS;
+  const singleTicketPrice = isLotofacil ? 3.0 : (isMaisMilionaria ? 6.0 : 5.0);
 
-  // Dezenas selecionadas para o fechamento (8 a 16 recomendadas)
+  // Dezenas selecionadas para o fechamento
   const [selectedPool, setSelectedPool] = useState<number[]>(() => {
+    if (isLotofacil) {
+      return [1, 2, 3, 4, 5, 8, 10, 11, 13, 14, 15, 17, 18, 20, 22, 24, 25];
+    }
     if (isMaisMilionaria) {
       return TOP_10_MAIS_MILIONARIA.slice(0, 10).map(t => t.number).sort((a, b) => a - b);
     }
@@ -62,11 +71,11 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
   // Alterna número no pool
   const toggleNumber = (num: number) => {
     if (selectedPool.includes(num)) {
-      if (selectedPool.length > 6) {
+      if (selectedPool.length > minPoolSize) {
         setSelectedPool(prev => prev.filter(n => n !== num));
       }
     } else {
-      if (selectedPool.length < 16) {
+      if (selectedPool.length < maxPoolSize) {
         setSelectedPool(prev => [...prev, num].sort((a, b) => a - b));
       }
     }
@@ -74,6 +83,11 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
 
   // Predefinições rápidas
   const handleSelectTop10 = () => {
+    if (isLotofacil) {
+      const top18 = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 20, 22, 24];
+      setSelectedPool(top18);
+      return;
+    }
     const list = isMaisMilionaria
       ? TOP_10_MAIS_MILIONARIA.map(t => t.number)
       : TOP_10_HISTORICAL.map(t => t.number);
@@ -81,9 +95,10 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
   };
 
   const handleSelectRandom12 = () => {
+    const targetCount = isLotofacil ? 18 : 12;
     const pool = Array.from({ length: maxLimit }, (_, i) => i + 1);
     const chosen: number[] = [];
-    while (chosen.length < 12) {
+    while (chosen.length < targetCount && pool.length > 0) {
       const idx = Math.floor(Math.random() * pool.length);
       chosen.push(pool[idx]);
       pool.splice(idx, 1);
@@ -111,14 +126,14 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
       if (drawn.length < 6) return null;
     }
 
-    return testWheelingAgainstDraw(wheelResult.games, drawn);
-  }, [testMode, customTestInput, latestDraw, wheelResult.games, maxLimit]);
+    return testWheelingAgainstDraw(wheelResult.games, drawn, activeLottery);
+  }, [testMode, customTestInput, latestDraw, wheelResult.games, maxLimit, activeLottery]);
 
   const handleSaveAllGames = () => {
     if (!onSaveBatchBets || wheelResult.games.length === 0) return;
     onSaveBatchBets(
       wheelResult.games,
-      `Fechamento Econômico (${selectedPool.length} dezenas): ${WHEELING_PLANS.find(p => p.id === guarantee)?.name}`
+      `Fechamento Econômico (${selectedPool.length} dezenas): ${plans.find(p => p.id === guarantee)?.name}`
     );
   };
 
@@ -239,7 +254,7 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {WHEELING_PLANS.map(plan => {
+          {plans.map(plan => {
             const isSelected = guarantee === plan.id;
             return (
               <button
@@ -382,20 +397,20 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                <span className="text-[10px] uppercase font-bold text-slate-500">Senas (6)</span>
+                <span className="text-[10px] uppercase font-bold text-slate-500">{isLotofacil ? '15 Acertos' : 'Senas (6)'}</span>
                 <span className="text-lg font-black text-amber-600 block">{testOutcome.senaCount}</span>
               </div>
               <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                <span className="text-[10px] uppercase font-bold text-slate-500">Quinas (5)</span>
+                <span className="text-[10px] uppercase font-bold text-slate-500">{isLotofacil ? '14 Acertos' : 'Quinas (5)'}</span>
                 <span className="text-lg font-black text-emerald-600 block">{testOutcome.quinaCount}</span>
               </div>
               <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                <span className="text-[10px] uppercase font-bold text-slate-500">Quadras (4)</span>
+                <span className="text-[10px] uppercase font-bold text-slate-500">{isLotofacil ? '13 Acertos' : 'Quadras (4)'}</span>
                 <span className="text-lg font-black text-teal-600 block">{testOutcome.quadraCount}</span>
               </div>
               <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                <span className="text-[10px] uppercase font-bold text-slate-500">Ternos (3)</span>
-                <span className="text-lg font-black text-slate-700 block">{testOutcome.ternoCount}</span>
+                <span className="text-[10px] uppercase font-bold text-slate-500">{isLotofacil ? '12/11 Acertos' : 'Ternos (3)'}</span>
+                <span className="text-lg font-black text-slate-700 block">{testOutcome.ternoCount + (testOutcome.elevenCount || 0)}</span>
               </div>
             </div>
           </div>

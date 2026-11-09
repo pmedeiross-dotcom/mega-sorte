@@ -19,6 +19,7 @@ import {
 import { Bet, LotteryType } from '../types';
 import { MEGA_SENA_OFFICIAL_DRAWS } from '../utils/megaSenaContestsData';
 import { MAIS_MILIONARIA_OFFICIAL_DRAWS } from '../utils/maisMilionariaContestsData';
+import { RECENT_LOTOFACIL_DRAWS } from '../utils/lotofacilContestsData';
 import NumberBall from './NumberBall';
 
 interface GameRankingPanelProps {
@@ -48,6 +49,8 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
   onSelectGame
 }) => {
   const isMaisMilionaria = currentLottery === 'maismilionaria';
+  const isLotofacil = currentLottery === 'lotofacil';
+  const lotteryTitle = isLotofacil ? 'Lotofácil' : isMaisMilionaria ? '+Milionária' : 'Mega-Sena';
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'score' | 'quadras' | 'quinas' | 'newest'>('score');
   const [searchFilter, setSearchFilter] = useState('');
@@ -59,7 +62,11 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
 
   // Simulação e Backtest Histórico Completo de Cada Jogo
   const { rankedGames, topAffinityNumbers, totalDrawsAnalyzed } = useMemo(() => {
-    const draws = isMaisMilionaria ? MAIS_MILIONARIA_OFFICIAL_DRAWS : MEGA_SENA_OFFICIAL_DRAWS;
+    const draws = isLotofacil
+      ? RECENT_LOTOFACIL_DRAWS
+      : isMaisMilionaria
+        ? MAIS_MILIONARIA_OFFICIAL_DRAWS
+        : MEGA_SENA_OFFICIAL_DRAWS;
     const totalDraws = draws.length;
 
     // Mapa de afinidade por dezena (quantos acertos foram contabilizados por número)
@@ -84,8 +91,21 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
           }
         }
 
-        // Se for +Milionária, avalia também os trevos se presentes
-        if (isMaisMilionaria && bet.trevos && (draw as any).trevos) {
+        if (isLotofacil) {
+          // Lotofácil: 15, 14, 13, 12, 11 acertos
+          if (hits === 15) {
+            senaCount++; // 15 acertos
+            if (!latestWinContest) { latestWinContest = draw.contest; latestWinDate = draw.date; }
+          } else if (hits === 14) {
+            quinaCount++; // 14 acertos
+            if (!latestWinContest) { latestWinContest = draw.contest; latestWinDate = draw.date; }
+          } else if (hits === 13) {
+            quadraCount++; // 13 acertos
+            if (!latestWinContest) { latestWinContest = draw.contest; latestWinDate = draw.date; }
+          } else if (hits >= 11) {
+            ternoCount++; // 12 e 11 acertos
+          }
+        } else if (isMaisMilionaria && bet.trevos && (draw as any).trevos) {
           const drawTrevos = (draw as any).trevos as number[];
           const trevosHits = bet.trevos.filter(t => drawTrevos.includes(t)).length;
 
@@ -99,7 +119,7 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
             quadraCount++; // Faixa 4 ou 5
             if (!latestWinContest) { latestWinContest = draw.contest; latestWinDate = draw.date; }
           } else if (hits >= 4 || (hits === 3 && trevosHits >= 1) || (hits === 2 && trevosHits === 2)) {
-            ternoCount++; // Faixas de 2 a 3 acertos
+            ternoCount++; // Faixas menores
             if (!latestWinContest) { latestWinContest = draw.contest; latestWinDate = draw.date; }
           }
         } else {
@@ -118,24 +138,27 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
           }
         }
 
-        // Atualiza afinidade das dezenas que pontuaram em quadras/quinas/senas
-        if (hits >= 4) {
+        // Atualiza afinidade das dezenas que pontuaram
+        const minHitForAffinity = isLotofacil ? 13 : 4;
+        if (hits >= minHitForAffinity) {
           draw.numbers.forEach(n => {
             if (betSet.has(n)) {
-              numberHitsMap.set(n, (numberHitsMap.get(n) || 0) + (hits === 6 ? 10 : hits === 5 ? 4 : 1));
+              numberHitsMap.set(n, (numberHitsMap.get(n) || 0) + (hits >= 14 || hits === 6 ? 10 : hits >= 13 || hits === 5 ? 4 : 1));
             }
           });
         }
       }
 
       // Pontuação Ponderada de Afinidade Histórica
-      const historicalScore = (senaCount * 100000) + (quinaCount * 4500) + (quadraCount * 120) + (ternoCount * 8);
+      const historicalScore = isLotofacil
+        ? (senaCount * 50000) + (quinaCount * 2500) + (quadraCount * 100) + (ternoCount * 10)
+        : (senaCount * 100000) + (quinaCount * 4500) + (quadraCount * 120) + (ternoCount * 8);
 
       let bestTierReached = 'Sem Premiação';
-      if (senaCount > 0) bestTierReached = isMaisMilionaria ? 'Faixa 1 (6+2)' : 'Sena (6 acertos)';
-      else if (quinaCount > 0) bestTierReached = isMaisMilionaria ? 'Faixa 2/3 (Quina)' : 'Quina (5 acertos)';
-      else if (quadraCount > 0) bestTierReached = isMaisMilionaria ? 'Faixa 4/5 (Quadra)' : 'Quadra (4 acertos)';
-      else if (ternoCount > 0) bestTierReached = isMaisMilionaria ? 'Faixa 6-10' : 'Terno (3 acertos)';
+      if (senaCount > 0) bestTierReached = isLotofacil ? '15 Acertos (Máximo)' : isMaisMilionaria ? 'Faixa 1 (6+2)' : 'Sena (6 acertos)';
+      else if (quinaCount > 0) bestTierReached = isLotofacil ? '14 Acertos' : isMaisMilionaria ? 'Faixa 2/3' : 'Quina (5 acertos)';
+      else if (quadraCount > 0) bestTierReached = isLotofacil ? '13 Acertos' : isMaisMilionaria ? 'Faixa 4/5' : 'Quadra (4 acertos)';
+      else if (ternoCount > 0) bestTierReached = isLotofacil ? '11/12 Acertos' : isMaisMilionaria ? 'Faixa 6-10' : 'Terno (3 acertos)';
 
       return {
         bet,
@@ -143,7 +166,7 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
         quinaCount,
         quadraCount,
         ternoCount,
-        totalPrizes: senaCount + quinaCount + quadraCount,
+        totalPrizes: senaCount + quinaCount + quadraCount + (isLotofacil ? ternoCount : 0),
         historicalScore,
         latestWinContest,
         latestWinDate,
@@ -162,7 +185,7 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
       topAffinityNumbers: topAffinity,
       totalDrawsAnalyzed: totalDraws
     };
-  }, [activeBets, isMaisMilionaria]);
+  }, [activeBets, isMaisMilionaria, isLotofacil]);
 
   // Ordenação dos jogos classificados
   const sortedGames = useMemo(() => {
@@ -202,7 +225,7 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
         <div className="max-w-md mx-auto space-y-1">
           <h3 className="text-xl font-black text-slate-900">Ranking Histórico de Jogos</h3>
           <p className="text-xs text-slate-500">
-            Salve algumas apostas da {isMaisMilionaria ? '+Milionária' : 'Mega-Sena'} para que o simulador teste seus bilhetes contra todos os {totalDrawsAnalyzed} concursos oficiais e classifique as melhores combinações.
+            Salve algumas apostas da {lotteryTitle} para que o simulador teste seus bilhetes contra todos os {totalDrawsAnalyzed} concursos oficiais e classifique as melhores combinações.
           </p>
         </div>
         {onNavigateToPlay && (
@@ -212,7 +235,7 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition cursor-pointer"
           >
             <Sparkles size={16} />
-            <span>Criar Jogos para o Ranking</span>
+            <span>Criar Jogos para o Ranking ({lotteryTitle})</span>
           </button>
         )}
       </div>
@@ -232,12 +255,12 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
                 Backtest Histórico Caixa • {totalDrawsAnalyzed} Concursos
               </span>
               <span className="text-xs text-slate-300">
-                {isMaisMilionaria ? '+Milionária' : 'Mega-Sena'}
+                {lotteryTitle}
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1.5 tracking-tight flex items-center gap-2">
               <Trophy size={26} className="text-amber-400" />
-              <span>Ranking de Jogos & Afinidade Histórica</span>
+              <span>Ranking de Jogos & Afinidade Histórica ({lotteryTitle})</span>
             </h2>
             <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-relaxed">
               Cada jogo salvo no seu histórico foi cruzado contra todos os <strong>{totalDrawsAnalyzed} concursos oficiais da Caixa</strong>. Descubra quais bilhetes teriam pontuado mais vezes e quais dezenas da sua carteira têm a maior afinidade vitoriosa.
@@ -341,15 +364,15 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
                     {/* Estatísticas de Premiações */}
                     <div className="grid grid-cols-3 gap-1.5 text-center pt-1">
                       <div className="p-2 rounded-xl bg-slate-50 border border-slate-150">
-                        <span className="text-[10px] text-slate-500 block font-bold">Quadras</span>
+                        <span className="text-[10px] text-slate-500 block font-bold">{isLotofacil ? '13 Acertos' : isMaisMilionaria ? 'Faixa 4/5' : 'Quadras'}</span>
                         <span className="text-sm font-black text-slate-900">{ranked.quadraCount}x</span>
                       </div>
                       <div className="p-2 rounded-xl bg-slate-50 border border-slate-150">
-                        <span className="text-[10px] text-slate-500 block font-bold">Quinas</span>
+                        <span className="text-[10px] text-slate-500 block font-bold">{isLotofacil ? '14 Acertos' : isMaisMilionaria ? 'Faixa 2/3' : 'Quinas'}</span>
                         <span className="text-sm font-black text-indigo-700">{ranked.quinaCount}x</span>
                       </div>
                       <div className="p-2 rounded-xl bg-slate-50 border border-slate-150">
-                        <span className="text-[10px] text-slate-500 block font-bold">Senas</span>
+                        <span className="text-[10px] text-slate-500 block font-bold">{isLotofacil ? '15 Acertos' : isMaisMilionaria ? 'Faixa 1' : 'Senas'}</span>
                         <span className="text-sm font-black text-amber-600">{ranked.senaCount}x</span>
                       </div>
                     </div>
@@ -474,16 +497,16 @@ export const GameRankingPanel: React.FC<GameRankingPanelProps> = ({
               <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="px-2.5 py-1 rounded-lg bg-slate-100 font-bold text-slate-700">
-                    {ranked.quadraCount} Quadras
+                    {ranked.quadraCount} {isLotofacil ? '13p' : 'Quadras'}
                   </span>
                   {ranked.quinaCount > 0 && (
                     <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
-                      {ranked.quinaCount} Quinas
+                      {ranked.quinaCount} {isLotofacil ? '14p' : 'Quinas'}
                     </span>
                   )}
                   {ranked.senaCount > 0 && (
                     <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 font-black border border-amber-300">
-                      {ranked.senaCount} Senas!
+                      {ranked.senaCount} {isLotofacil ? '15 Acertos!' : 'Senas!'}
                     </span>
                   )}
                 </div>
