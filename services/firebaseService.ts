@@ -75,12 +75,16 @@ export const saveBetToCloud = async (userId: string, bet: Bet): Promise<void> =>
       id: bet.id,
       userId: userId,
       numbers: bet.numbers,
+      lottery: bet.lottery || 'megasena',
       createdAt: bet.createdAt || Date.now(),
       type: bet.type,
       sum: bet.sum,
       sumStatus: bet.sumStatus
     };
 
+    if (bet.trevos && Array.isArray(bet.trevos) && bet.trevos.length >= 2) {
+      betPayload.trevos = bet.trevos.slice(0, 5);
+    }
     if (bet.reasoning) {
       betPayload.reasoning = bet.reasoning.substring(0, 3000);
     }
@@ -127,6 +131,7 @@ export const subscribeToCloudBets = (
         const data = docSnapshot.data() as Bet;
         bets.push({
           ...data,
+          lottery: data.lottery || 'megasena',
           id: docSnapshot.id,
           isCloudSynced: true
         });

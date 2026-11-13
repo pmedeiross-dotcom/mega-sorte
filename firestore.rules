@@ -50,8 +50,14 @@ service cloud.firestore {
         && data.userId == request.auth.uid
         && data.numbers is list
         && data.numbers.size() >= 6
-        && data.numbers.size() <= 15
+        && data.numbers.size() <= 20
+        && (
+          (('lottery' in data) && data.lottery == 'lotofacil' && data.numbers.size() >= 15)
+          || ((!('lottery' in data) || data.lottery != 'lotofacil') && data.numbers.size() <= 15)
+        )
         && (data.numbers.size() > 0 && data.numbers[0] is int)
+        && (!('lottery' in data) || data.lottery in ['megasena', 'maismilionaria', 'lotofacil'])
+        && (!('trevos' in data) || (data.trevos is list && data.trevos.size() >= 2 && data.trevos.size() <= 5 && data.trevos[0] is int))
         && (data.createdAt is int || data.createdAt is number)
         && data.type in ['manual', 'random', 'ai', 'smart_rules']
         && (data.sum is int || data.sum is number)
@@ -61,7 +67,7 @@ service cloud.firestore {
         && (!('groundingUrls' in data) || (data.groundingUrls is list && data.groundingUrls.size() <= 20))
         && (!('analysis' in data) || data.analysis is map)
         && data.keys().hasAll(['id', 'userId', 'numbers', 'createdAt', 'type', 'sum', 'sumStatus'])
-        && data.keys().hasOnly(['id', 'userId', 'numbers', 'createdAt', 'type', 'reasoning', 'sum', 'sumStatus', 'advancedMetrics', 'groundingUrls', 'analysis']);
+        && data.keys().hasOnly(['id', 'userId', 'numbers', 'trevos', 'lottery', 'createdAt', 'type', 'reasoning', 'sum', 'sumStatus', 'advancedMetrics', 'groundingUrls', 'analysis']);
     }
 
     // User Profile Collection

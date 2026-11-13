@@ -1,19 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Calculator, 
-  Sparkles, 
   ShieldCheck, 
-  Award, 
   Save, 
-  Trash2, 
   Play, 
-  CheckCircle2, 
-  TrendingDown, 
-  Info,
-  DollarSign,
-  Grid3X3,
-  Flame,
-  Clock
+  Grid3X3
 } from 'lucide-react';
 import { 
   generateWheeling, 
@@ -26,12 +17,21 @@ import {
 import { OfficialDrawResult, LotteryType } from '../types';
 import { TOP_10_HISTORICAL } from '../utils/megaSenaOfficialStats';
 import { TOP_10_MAIS_MILIONARIA } from '../utils/maisMilionariaOfficialStats';
-import { TOP_10_LOTOFACIL } from '../utils/lotofacilRules';
 
 interface WheelingSimulatorViewProps {
   latestDraw?: OfficialDrawResult;
   lottery?: LotteryType;
   onSaveBatchBets?: (games: number[][], reason: string) => void;
+}
+
+function getDefaultPoolForLottery(lotteryType: LotteryType): number[] {
+  if (lotteryType === 'lotofacil') {
+    return [1, 2, 3, 4, 5, 8, 10, 11, 13, 14, 15, 17, 18, 20, 22, 24, 25];
+  }
+  if (lotteryType === 'maismilionaria') {
+    return TOP_10_MAIS_MILIONARIA.slice(0, 10).map(t => t.number).sort((a, b) => a - b);
+  }
+  return TOP_10_HISTORICAL.slice(0, 10).map(t => t.number).sort((a, b) => a - b);
 }
 
 export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
@@ -46,22 +46,23 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
   const minPoolSize = isLotofacil ? 16 : 7;
   const maxPoolSize = isLotofacil ? 22 : 16;
   const plans = isLotofacil ? WHEELING_PLANS_LOTOFACIL : WHEELING_PLANS;
-  const singleTicketPrice = isLotofacil ? 3.0 : (isMaisMilionaria ? 6.0 : 5.0);
 
   // Dezenas selecionadas para o fechamento
-  const [selectedPool, setSelectedPool] = useState<number[]>(() => {
-    if (isLotofacil) {
-      return [1, 2, 3, 4, 5, 8, 10, 11, 13, 14, 15, 17, 18, 20, 22, 24, 25];
-    }
-    if (isMaisMilionaria) {
-      return TOP_10_MAIS_MILIONARIA.slice(0, 10).map(t => t.number).sort((a, b) => a - b);
-    }
-    return TOP_10_HISTORICAL.slice(0, 10).map(t => t.number).sort((a, b) => a - b);
-  });
-
+  const [selectedPool, setSelectedPool] = useState<number[]>(() => getDefaultPoolForLottery(activeLottery));
   const [guarantee, setGuarantee] = useState<WheelingGuarantee>('quadra_if_6');
   const [testMode, setTestMode] = useState<'latest' | 'custom' | null>(null);
   const [customTestInput, setCustomTestInput] = useState('');
+
+  // Reset limpo do pool e garantia ao trocar de loteria
+  useEffect(() => {
+    setSelectedPool(getDefaultPoolForLottery(activeLottery));
+    setTestMode(null);
+    setCustomTestInput('');
+    const currentPlans = activeLottery === 'lotofacil' ? WHEELING_PLANS_LOTOFACIL : WHEELING_PLANS;
+    if (!currentPlans.some(p => p.id === guarantee)) {
+      setGuarantee(currentPlans[0].id);
+    }
+  }, [activeLottery]);
 
   // Geração do fechamento combinatorial
   const wheelResult: WheelingResult = useMemo(() => {
@@ -115,19 +116,20 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
     if (!testMode) return null;
     let drawn: number[] = [];
 
+    const expectedMin = isLotofacil ? 15 : 6;
     if (testMode === 'latest') {
-      if (!latestDraw?.numbers || latestDraw.numbers.length < 6) return null;
+      if (!latestDraw?.numbers || latestDraw.numbers.length < expectedMin) return null;
       drawn = latestDraw.numbers;
     } else if (testMode === 'custom') {
       drawn = customTestInput
         .split(/[\s,;-]+/)
         .map(s => parseInt(s.trim(), 10))
         .filter(n => !isNaN(n) && n >= 1 && n <= maxLimit);
-      if (drawn.length < 6) return null;
+      if (drawn.length < expectedMin) return null;
     }
 
     return testWheelingAgainstDraw(wheelResult.games, drawn, activeLottery);
-  }, [testMode, customTestInput, latestDraw, wheelResult.games, maxLimit, activeLottery]);
+  }, [testMode, customTestInput, latestDraw, wheelResult.games, maxLimit, activeLottery, isLotofacil]);
 
   const handleSaveAllGames = () => {
     if (!onSaveBatchBets || wheelResult.games.length === 0) return;
@@ -141,7 +143,9 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
     <div className="space-y-6">
       {/* Banner Principal */}
       <div className={`text-white rounded-3xl p-5 sm:p-7 shadow-lg relative overflow-hidden border ${
-        isMaisMilionaria 
+        isLotofacil
+          ? 'bg-gradient-to-r from-purple-950 via-fuchsia-950 to-slate-900 border-purple-800'
+          : isMaisMilionaria 
           ? 'bg-gradient-to-r from-amber-950 via-yellow-950 to-slate-900 border-amber-800' 
           : 'bg-gradient-to-r from-slate-900 via-teal-950 to-emerald-950 border-emerald-800'
       }`}>
@@ -149,7 +153,9 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
-                isMaisMilionaria 
+                isLotofacil
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-400/30'
+                  : isMaisMilionaria 
                   ? 'bg-amber-500/20 text-amber-300 border-amber-400/30' 
                   : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
               }`}>
@@ -160,11 +166,13 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1 tracking-tight flex items-center gap-2">
-              <Calculator size={24} className={isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400'} />
+              <Calculator size={24} className={isLotofacil ? 'text-purple-400' : (isMaisMilionaria ? 'text-amber-400' : 'text-emerald-400')} />
               <span>Simulador de Fechamentos & Desdobramentos Econômicos</span>
             </h2>
             <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-relaxed">
-              Jogue com mais dezenas (8 a 16 números) pagando apenas uma fração do preço oficial da Caixa, com <strong>garantia matemática 100% comprovada</strong> de Quadra ou Quina.
+              {isLotofacil
+                ? 'Jogue com grupos de 16 a 22 dezenas na Lotofácil pagando apenas uma fração do preço oficial da Caixa, com garantia matemática comprovada de 13 ou 14 acertos.'
+                : 'Jogue com mais dezenas (7 a 16 números) pagando apenas uma fração do preço oficial da Caixa, com garantia matemática comprovada de Quadra ou Quina.'}
             </p>
           </div>
 
@@ -187,11 +195,11 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
             <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-              <Grid3X3 size={18} className={isMaisMilionaria ? 'text-amber-600' : 'text-emerald-600'} />
+              <Grid3X3 size={18} className={isLotofacil ? 'text-purple-600' : (isMaisMilionaria ? 'text-amber-600' : 'text-emerald-600')} />
               <span>1. Escolha o Grupo de Dezenas ({selectedPool.length} selecionadas)</span>
             </h3>
             <p className="text-xs text-slate-500">
-              Selecione entre 7 e 16 dezenas para compor a sua matriz de fechamento.
+              Selecione entre {minPoolSize} e {maxPoolSize} dezenas (de 01 a {maxLimit}) para compor a sua matriz de fechamento.
             </p>
           </div>
 
@@ -201,16 +209,16 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
               onClick={handleSelectTop10}
               className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
             >
-              Top 10 Históricas
+              {isLotofacil ? 'Top 18 Históricas' : 'Top 10 Históricas'}
             </button>
             <button
               onClick={handleSelectRandom12}
               className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
             >
-              12 Dezenas Aleatórias
+              {isLotofacil ? '18 Dezenas Aleatórias' : '12 Dezenas Aleatórias'}
             </button>
             <button
-              onClick={() => setSelectedPool([1, 2, 3, 4, 5, 6, 7])}
+              onClick={() => setSelectedPool(Array.from({ length: minPoolSize }, (_, i) => i + 1))}
               className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-600 text-xs font-bold transition-colors cursor-pointer"
             >
               Redefinir
@@ -218,8 +226,8 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
           </div>
         </div>
 
-        {/* Grade de 01 a 60 (ou 01 a 50) */}
-        <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 sm:gap-2">
+        {/* Grade de 01 a maxLimit */}
+        <div className={`grid gap-1.5 sm:gap-2 ${isLotofacil ? 'grid-cols-5' : 'grid-cols-5 sm:grid-cols-10'}`}>
           {Array.from({ length: maxLimit }, (_, i) => i + 1).map(num => {
             const isSelected = selectedPool.includes(num);
             return (
@@ -228,7 +236,9 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
                 onClick={() => toggleNumber(num)}
                 className={`h-10 sm:h-11 rounded-xl font-mono font-black text-xs sm:text-sm transition-all cursor-pointer flex items-center justify-center border ${
                   isSelected
-                    ? isMaisMilionaria
+                    ? isLotofacil
+                      ? 'bg-purple-600 text-white border-purple-700 shadow-md scale-105'
+                      : isMaisMilionaria
                       ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-md scale-105'
                       : 'bg-emerald-600 text-white border-emerald-700 shadow-md scale-105'
                     : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -321,7 +331,7 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
           <div className="p-4 rounded-2xl bg-white/10 border border-emerald-500/30 space-y-1">
             <span className="text-[10px] uppercase font-bold text-emerald-300 block">Fechamento Inteligente Reduzido</span>
             <span className="text-xl font-black text-emerald-400">{formatBRL(wheelResult.economicWheelCost)}</span>
-            <span className="text-[10px] text-emerald-200 block">{wheelResult.gamesCount} apostas simples de 6 dezenas</span>
+            <span className="text-[10px] text-emerald-200 block">{wheelResult.gamesCount} apostas simples de {isLotofacil ? '15' : '6'} dezenas</span>
           </div>
 
           <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 space-y-1">
@@ -339,7 +349,7 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
             <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-              <Play size={18} className="text-emerald-600" />
+              <Play size={18} className={isLotofacil ? 'text-purple-600' : 'text-emerald-600'} />
               <span>3. Testar Desempenho do Fechamento</span>
             </h3>
             <p className="text-xs text-slate-500">
@@ -366,21 +376,21 @@ export const WheelingSimulatorView: React.FC<WheelingSimulatorViewProps> = ({
                   : 'bg-slate-100 text-slate-800 border-slate-200 hover:bg-slate-200'
               }`}
             >
-              Informar 6 Dezenas
+              Informar {isLotofacil ? '15' : '6'} Dezenas
             </button>
           </div>
         </div>
 
         {testMode === 'custom' && (
-          <div className="max-w-md space-y-1">
+          <div className="max-w-lg space-y-1">
             <input
               type="text"
               value={customTestInput}
               onChange={e => setCustomTestInput(e.target.value)}
-              placeholder="ex: 05, 12, 14, 25, 41, 50"
+              placeholder={isLotofacil ? 'ex: 01, 02, 04, 05, 08, 10, 11, 13, 14, 15, 17, 19, 20, 23, 25' : 'ex: 05, 12, 14, 25, 41, 50'}
               className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
-            <span className="text-[10px] text-slate-400">Informe 6 dezenas para simular</span>
+            <span className="text-[10px] text-slate-400">Informe {isLotofacil ? '15' : '6'} dezenas para simular</span>
           </div>
         )}
 

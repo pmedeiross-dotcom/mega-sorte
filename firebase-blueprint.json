@@ -50,7 +50,16 @@
         },
         "numbers": {
           "type": "array",
-          "description": "Array of 6 to 15 chosen lottery numbers between 1 and 60"
+          "description": "Array of 6 to 20 chosen lottery numbers"
+        },
+        "trevos": {
+          "type": "array",
+          "description": "Optional array of 2 lucky clovers (1 to 6) for +Milionária"
+        },
+        "lottery": {
+          "type": "string",
+          "description": "Lottery modality identifier",
+          "enum": ["megasena", "maismilionaria", "lotofacil"]
         },
         "createdAt": {
           "type": "number",

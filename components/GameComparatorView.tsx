@@ -1,21 +1,16 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   GitCompare, 
   Layers, 
   Sparkles, 
   AlertTriangle, 
-  CheckCircle2, 
   ArrowRightLeft, 
-  Plus, 
-  Trash2, 
   Info, 
   Percent, 
   ShieldCheck,
-  TrendingUp,
   SlidersHorizontal
 } from 'lucide-react';
 import { Bet, LotteryType } from '../types';
-import NumberBall from './NumberBall';
 
 interface GameComparatorViewProps {
   savedBets: Bet[];
@@ -30,13 +25,25 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   onAddBet,
   onGoToGenerator
 }) => {
+  const isLotofacil = lottery === 'lotofacil';
   const isMaisMilionaria = lottery === 'maismilionaria';
-  const maxLimit = isMaisMilionaria ? 50 : 60;
+  const maxLimit = isLotofacil ? 25 : (isMaisMilionaria ? 50 : 60);
+  const ticketSize = isLotofacil ? 15 : 6;
 
   // IDs dos jogos selecionados para comparar (máximo 4)
   const [selectedBetIds, setSelectedBetIds] = useState<string[]>(() => {
     return savedBets.slice(0, 2).map(b => b.id);
   });
+
+  // Mantém seleção sincronizada ao trocar de modalidade ou alterar carteira
+  useEffect(() => {
+    const validIds = selectedBetIds.filter(id => savedBets.some(b => b.id === id));
+    if (validIds.length < 2) {
+      setSelectedBetIds(savedBets.slice(0, 2).map(b => b.id));
+    } else if (validIds.length !== selectedBetIds.length) {
+      setSelectedBetIds(validIds);
+    }
+  }, [lottery, savedBets]);
 
   const selectedBets = useMemo(() => {
     return selectedBetIds
@@ -99,8 +106,13 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
         const jaccard = unionSize > 0 ? (common.length / unionSize) * 100 : 0;
 
         let collisionLevel: 'baixa' | 'moderada' | 'alta' = 'baixa';
-        if (common.length >= 4) collisionLevel = 'alta';
-        else if (common.length >= 2) collisionLevel = 'moderada';
+        if (isLotofacil) {
+          if (common.length >= 12) collisionLevel = 'alta';
+          else if (common.length >= 10) collisionLevel = 'moderada';
+        } else {
+          if (common.length >= 4) collisionLevel = 'alta';
+          else if (common.length >= 2) collisionLevel = 'moderada';
+        }
 
         stats.push({
           gameAIndex: i + 1,
@@ -114,51 +126,62 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
       }
     }
     return stats;
-  }, [selectedBets]);
+  }, [selectedBets, isLotofacil]);
 
   // Veredito Geral
   const verdict = useMemo(() => {
     if (selectedBets.length < 2) return null;
     const maxShared = Math.max(...pairwiseStats.map(s => s.common.length), 0);
     const coverage = unionNumbers.length;
+    const highThreshold = isLotofacil ? 12 : 4;
+    const lowThreshold = isLotofacil ? 9 : 1;
 
-    if (maxShared >= 4) {
+    if (maxShared >= highThreshold) {
       return {
         level: 'warning',
         title: 'Alta Redundância Detectada',
         description: `Os jogos comparados compartilham até ${maxShared} dezenas em comum. Isso reduz a diversificação e aumenta o risco de pagar por combinações semelhantes.`
       };
-    } else if (maxShared <= 1) {
+    } else if (maxShared <= lowThreshold) {
       return {
         level: 'success',
         title: 'Excelente Complementaridade (Anti-Colisão)',
-        description: `Ótima dispersão! Os jogos compartilham no máximo ${maxShared} dezena e juntos cobrem ${coverage} dezenas distintas da cartela sem desperdício de investimento.`
+        description: `Ótima dispersão! Os jogos compartilham no máximo ${maxShared} dezena(s) e juntos cobrem ${coverage} de ${maxLimit} dezenas da cartela sem desperdício.`
       };
     } else {
       return {
         level: 'info',
         title: 'Equilíbrio Estratégico Moderado',
-        description: `Compartilham 2 ou 3 dezenas âncora, mantendo uma boa área de cobertura independente (${coverage} dezenas no total).`
+        description: `Compartilham ${maxShared} dezenas âncora, mantendo uma boa área de cobertura independente (${coverage} dezenas no total).`
       };
     }
-  }, [selectedBets, pairwiseStats, unionNumbers]);
+  }, [selectedBets, pairwiseStats, unionNumbers, isLotofacil, maxLimit]);
 
-  // Gerar aposta divergente (que evita as dezenas dos jogos selecionados)
+  // Gerar aposta divergente / complementar (evita ao máximo as dezenas mais repetidas entre os jogos selecionados)
   const handleGenerateDivergentBet = () => {
     if (!onAddBet) return;
-    const usedSet = new Set(unionNumbers);
-    const available = Array.from({ length: maxLimit }, (_, i) => i + 1)
-      .filter(n => !usedSet.has(n));
+    const freqInSelected: Record<number, number> = {};
+    for (let i = 1; i <= maxLimit; i++) freqInSelected[i] = 0;
+    selectedBets.forEach(b => b.numbers.forEach(n => {
+      if (freqInSelected[n] !== undefined) freqInSelected[n]++;
+    }));
 
-    // Escolhe 6 dezenas equilibradas das disponíveis
-    const shuffled = [...available].sort(() => Math.random() - 0.5);
-    const chosen = shuffled.slice(0, 6).sort((a, b) => a - b);
+    // Prioriza números menos usados (0 vezes primeiro, depois 1 vez, etc.) com embaralhamento dentro de cada grupo
+    const candidates = Array.from({ length: maxLimit }, (_, i) => i + 1)
+      .sort((a, b) => {
+        const diff = freqInSelected[a] - freqInSelected[b];
+        return diff !== 0 ? diff : Math.random() - 0.5;
+      });
 
-    if (chosen.length === 6) {
+    const chosen = candidates.slice(0, ticketSize).sort((a, b) => a - b);
+
+    if (chosen.length === ticketSize) {
       onAddBet(
         chosen,
         'smart_rules',
-        `Aposta Divergente Anti-Colisão: 100% de dezenas independentes dos Jogos comparados, expandindo a cobertura da cartela.`
+        isLotofacil
+          ? `Aposta Complementar Anti-Colisão (Lotofácil): prioriza dezenas ausentes e de menor sobreposição nos jogos comparados.`
+          : `Aposta Divergente Anti-Colisão: 100% focada em reduzir colisões com os jogos comparados, expandindo a cobertura da cartela.`
       );
     }
   };
@@ -167,19 +190,19 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
     return (
       <div className="bg-white rounded-3xl p-8 sm:p-12 text-center border border-slate-200 shadow-sm space-y-4 max-w-xl mx-auto">
         <div className={`w-16 h-16 rounded-3xl mx-auto flex items-center justify-center ${
-          isMaisMilionaria ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+          isLotofacil ? 'bg-purple-100 text-purple-800' : (isMaisMilionaria ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')
         }`}>
           <GitCompare size={32} />
         </div>
         <h3 className="text-xl font-black text-slate-900">Comparador Direto de Jogos</h3>
         <p className="text-sm text-slate-600">
-          Você precisa de pelo menos 2 apostas salvas na carteira para comparar a sobreposição, similaridade e complementaridade entre elas.
+          Você precisa de pelo menos 2 apostas salvas na carteira desta modalidade para comparar a sobreposição, similaridade e complementaridade entre elas.
         </p>
         {onGoToGenerator && (
           <button
             onClick={onGoToGenerator}
             className={`px-5 py-2.5 rounded-2xl font-black text-xs text-white shadow-md cursor-pointer ${
-              isMaisMilionaria ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'
+              isLotofacil ? 'bg-purple-600 hover:bg-purple-700' : (isMaisMilionaria ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')
             }`}
           >
             Ir ao Gerador de Apostas
@@ -193,7 +216,9 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
     <div className="space-y-6">
       {/* Banner Principal */}
       <div className={`text-white rounded-3xl p-5 sm:p-7 shadow-lg relative overflow-hidden border ${
-        isMaisMilionaria 
+        isLotofacil
+          ? 'bg-gradient-to-r from-purple-950 via-fuchsia-950 to-slate-900 border-purple-800'
+          : isMaisMilionaria 
           ? 'bg-gradient-to-r from-amber-950 via-yellow-950 to-slate-900 border-amber-800' 
           : 'bg-gradient-to-r from-slate-900 via-teal-950 to-emerald-950 border-emerald-800'
       }`}>
@@ -201,7 +226,9 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
-                isMaisMilionaria 
+                isLotofacil
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-400/30'
+                  : isMaisMilionaria 
                   ? 'bg-amber-500/20 text-amber-300 border-amber-400/30' 
                   : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
               }`}>

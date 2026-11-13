@@ -2679,11 +2679,12 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* Aba de Análise Estatística Avançada (20 Módulos Oficiais) */}
+        {/* Aba de Análise Estatística Avançada (Multi-loterias) */}
         {activeTab === 'analytics' && (
           <AdvancedAnalyticsView 
             latestDraw={activeOfficialDraw} 
-            lottery={currentLottery} 
+            lottery={currentLottery}
+            history={history.filter(b => (b.lottery || 'megasena') === currentLottery)}
           />
         )}
 
@@ -3232,7 +3233,11 @@ const App: React.FC = () => {
             )}
 
             {/* Gráfico de Visualização de Dados (Recharts) */}
-            <FrequencyChart history={filteredHistory} referenceDraw={activeRefNumbers} />
+            <FrequencyChart 
+              history={filteredHistory} 
+              referenceDraw={activeRefNumbers} 
+              lottery={currentLottery}
+            />
 
             {/* Toggle de Apenas Premiadas */}
             <div className="flex items-center justify-between pt-2">
@@ -3259,10 +3264,7 @@ const App: React.FC = () => {
                   bet={bet} 
                   drawnNumbers={activeRefNumbers}
                   drawnTrevos={activeRefTrevos}
-                  onDelete={(id) => {
-                    setHistory(h => h.filter(x => x.id !== id));
-                    showToast("Aposta excluída.");
-                  }} 
+                  onDelete={handleDeleteBet} 
                   onAnalyze={handleAnalyzeBet} 
                   isAnalyzing={analyzingId === bet.id} 
                 />

@@ -8,6 +8,7 @@
 
 import { computeAllMegaSenaAnalytics } from '../utils/megaSenaAdvancedAnalytics';
 import { computeAllMaisMilionariaAnalytics } from '../utils/maisMilionariaAdvancedAnalytics';
+import { computeAllLotofacilAnalytics } from '../utils/lotofacilAdvancedAnalytics';
 import { computeSequenceAnalytics, SequenceAnalysisResult } from '../utils/sequenceAnalytics';
 import { TOTAL_CONTESTS_COUNT, MegaDraw } from '../utils/megaSenaContestsData';
 import { TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT, MaisMilionariaDraw } from '../utils/maisMilionariaContestsData';
@@ -20,6 +21,7 @@ const PREFIX = `ms_cache_${CACHE_VERSION}_`;
 const KEYS = {
   MEGA_ANALYTICS: `${PREFIX}megasena_analytics`,
   MAIS_ANALYTICS: `${PREFIX}maismilionaria_analytics`,
+  LOTO_ANALYTICS: `${PREFIX}lotofacil_analytics`,
   SEQ_MEGA: `${PREFIX}seq_megasena`,
   SEQ_MAIS: `${PREFIX}seq_maismilionaria`,
   SEQ_LOTO: `${PREFIX}seq_lotofacil`,
@@ -228,6 +230,28 @@ class OfflineCacheManager {
   }
 
   /**
+   * Análise Lotofácil com Cache Inteligente L1/L2
+   */
+  public getOrComputeLotofacilAnalytics(
+    draws: LotofacilDraw[],
+    forceRefresh = false
+  ) {
+    const hash = this.computeHash(draws);
+    const count = draws.length;
+
+    if (!forceRefresh) {
+      const cached = this.getFromStore<any>(KEYS.LOTO_ANALYTICS, hash, count);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    const result = computeAllLotofacilAnalytics(draws);
+    this.saveToStore(KEYS.LOTO_ANALYTICS, hash, count, result);
+    return result;
+  }
+
+  /**
    * Análise de Sequências com Cache Inteligente L1/L2
    */
   public getOrComputeSequenceAnalytics(
@@ -235,7 +259,11 @@ class OfflineCacheManager {
     latestDraw?: OfficialDrawResult,
     forceRefresh = false
   ): SequenceAnalysisResult {
-    const key = lottery === 'maismilionaria' ? KEYS.SEQ_MAIS : KEYS.SEQ_MEGA;
+    const key = lottery === 'maismilionaria'
+      ? KEYS.SEQ_MAIS
+      : lottery === 'lotofacil'
+      ? KEYS.SEQ_LOTO
+      : KEYS.SEQ_MEGA;
     const latestNum = latestDraw?.contestNumber || 0;
     const hash = `${lottery}-${latestNum}-${latestDraw?.numbers?.join(',') || 'none'}`;
 
@@ -294,6 +322,7 @@ class OfflineCacheManager {
 
       // 3. Lotofácil
       if (lotoDraws && lotoDraws.length > 0) {
+        this.getOrComputeLotofacilAnalytics(lotoDraws, false);
         this.getOrComputeSequenceAnalytics('lotofacil');
       }
     } catch (err) {
