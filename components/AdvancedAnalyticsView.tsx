@@ -38,7 +38,7 @@ import { TOTAL_CONTESTS_COUNT } from '../utils/megaSenaContestsData';
 import { TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT } from '../utils/maisMilionariaContestsData';
 import { FRAME_NUMBERS } from '../utils/megaSenaAdvancedAnalytics';
 import { MAIS_MILIONARIA_FRAME } from '../utils/maisMilionariaAdvancedAnalytics';
-import { Bet, OfficialDrawResult, LotteryType } from '../types';
+import { Bet, OfficialDrawResult, LotteryType, TernoBoostProfile } from '../types';
 import { offlineCacheManager } from '../services/offlineCacheManager';
 import FrequencyChart from './FrequencyChart';
 
@@ -46,12 +46,18 @@ interface AdvancedAnalyticsViewProps {
   latestDraw?: OfficialDrawResult;
   lottery?: LotteryType;
   history?: Bet[];
+  ternoBoostProfile?: TernoBoostProfile;
+  onDisableTernoBoost?: () => void;
+  onGoToBacktesting?: () => void;
 }
 
 export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({ 
   latestDraw,
   lottery = 'megasena',
-  history = []
+  history = [],
+  ternoBoostProfile,
+  onDisableTernoBoost,
+  onGoToBacktesting
 }) => {
   const isLotofacil = lottery === 'lotofacil';
   const isMaisMilionaria = lottery === 'maismilionaria';
@@ -99,14 +105,21 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
   // Filtros da Tabela Geral com useDeferredValue
   const [tableSearch, setTableSearch] = useState('');
   const deferredTableSearch = useDeferredValue(tableSearch);
-  const [tableSort, setTableSort] = useState<'ranking' | 'delay' | 'number' | 'draws'>('ranking');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'quente' | 'morna' | 'fria'>('all');
+  const [tableSort, setTableSort] = useState<'ranking' | 'delay' | 'number' | 'draws' | 'terno_weight'>('ranking');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'quente' | 'morna' | 'fria' | 'terno_boost'>('all');
+
+  const ternoFocusSet = useMemo(() => {
+    if (!ternoBoostProfile) return new Set<number>();
+    return new Set([...ternoBoostProfile.matchedHotNumbers, ...ternoBoostProfile.topNumbers]);
+  }, [ternoBoostProfile]);
 
   // Dados filtrados da Tabela de Números
   const filteredNumbers = useMemo(() => {
     let list = [...(analytics?.numbersAnalysis || [])];
 
-    if (statusFilter !== 'all') {
+    if (statusFilter === 'terno_boost') {
+      list = list.filter(n => ternoFocusSet.has(n.number));
+    } else if (statusFilter !== 'all') {
       list = list.filter(n => n.status === statusFilter);
     }
 
@@ -118,6 +131,11 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
     }
 
     list.sort((a, b) => {
+      if (tableSort === 'terno_weight' && ternoBoostProfile) {
+        const wA = ternoBoostProfile.numberWeights[a.number] || 1;
+        const wB = ternoBoostProfile.numberWeights[b.number] || 1;
+        if (wB !== wA) return wB - wA;
+      }
       if (tableSort === 'ranking') return a.ranking - b.ranking;
       if (tableSort === 'draws') return b.totalDraws - a.totalDraws;
       if (tableSort === 'delay') return b.currentDelay - a.currentDelay;
@@ -126,7 +144,7 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
     });
 
     return list;
-  }, [analytics?.numbersAnalysis, statusFilter, deferredTableSearch, tableSort]);
+  }, [analytics?.numbersAnalysis, statusFilter, deferredTableSearch, tableSort, ternoBoostProfile, ternoFocusSet]);
 
   // Pareto 80/20
   const paretoGroupA: number[] = useMemo(() => {
@@ -250,6 +268,87 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
         </div>
       </div>
 
+      {/* Painel de Integração do Filtro de Simulações que Acertaram Terno (3+ Dezenas) */}
+      {ternoBoostProfile ? (
+        <div className="bg-white rounded-3xl p-5 border border-emerald-200 shadow-sm space-y-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span className="font-bold text-emerald-700">Reforço Ativo na Análise Avançada</span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">
+                  {ternoBoostProfile.ternoSimulationsCount} de {ternoBoostProfile.sourceSimulationsCount} simulações ({ternoBoostProfile.minHitsThreshold}+ acertos)
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">
+                  Soma {ternoBoostProfile.targetSumMin}–{ternoBoostProfile.targetSumMax} (média {ternoBoostProfile.avgSum})
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                As dezenas com maior acerto nessas simulações estão recebendo peso extra no Gerador e destaque na Tabela Geral abaixo.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSubTab('table');
+                  setStatusFilter(statusFilter === 'terno_boost' ? 'all' : 'terno_boost');
+                  setTableSort('terno_weight');
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap ${
+                  statusFilter === 'terno_boost'
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                }`}
+              >
+                {statusFilter === 'terno_boost' ? 'Mostrar Todas as Dezenas' : `Filtrar Só Dezenas do Terno (${ternoFocusSet.size})`}
+              </button>
+              {onDisableTernoBoost && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter('all');
+                    if (tableSort === 'terno_weight') setTableSort('ranking');
+                    onDisableTernoBoost();
+                  }}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer whitespace-nowrap"
+                >
+                  Desativar
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-[11px] font-bold text-slate-600 mr-1">Foco Terno+:</span>
+            {ternoBoostProfile.matchedHotNumbers.map(n => (
+              <span
+                key={`aa-terno-${n}`}
+                className="w-7 h-7 rounded-lg bg-emerald-600 text-white font-mono text-xs font-black flex items-center justify-center tabular-nums"
+                title={`Peso: ${ternoBoostProfile.numberWeights[n]}x`}
+              >
+                {n.toString().padStart(2, '0')}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : onGoToBacktesting ? (
+        <div className="bg-slate-50 rounded-2xl px-4 py-3 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <span className="text-slate-600">
+            Quer reforçar a Análise Avançada com as estatísticas das simulações que acertaram Terno (3+ dezenas)? Execute o Backtesting e ative o filtro.
+          </span>
+          <button
+            type="button"
+            onClick={onGoToBacktesting}
+            className="text-emerald-700 hover:text-emerald-900 font-black underline text-left sm:text-right cursor-pointer whitespace-nowrap"
+          >
+            Ir ao Backtesting
+          </button>
+        </div>
+      ) : null}
+
       {/* Sub-abas de Navegação Temática */}
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
         {[
@@ -315,6 +414,9 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
                 className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
               >
                 <option value="all">Todas as Temperaturas</option>
+                {ternoBoostProfile && (
+                  <option value="terno_boost">Reforço Simulações Terno+ ({ternoFocusSet.size})</option>
+                )}
                 <option value="quente">🔥 Quentes</option>
                 <option value="morna">⚡ Mornas</option>
                 <option value="fria">❄️ Frias</option>
@@ -326,6 +428,9 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
                 aria-label="Ordenar tabela estatística"
                 className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
               >
+                {ternoBoostProfile && (
+                  <option value="terno_weight">Peso Simulações Terno+</option>
+                )}
                 <option value="ranking">🏆 Mais Sorteadas (Top Ranking)</option>
                 <option value="draws">Total de Saídas</option>
                 <option value="delay">⏳ Mais Atrasadas</option>
@@ -396,6 +501,12 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
                       <span>Média atraso:</span>
                       <span>{expectedDelay} conc.</span>
                     </div>
+                    {ternoBoostProfile && ternoFocusSet.has(item.number) && (
+                      <div className="flex justify-between items-center text-emerald-700 text-[10px] font-black pt-0.5 border-t border-emerald-100">
+                        <span>Reforço Terno+:</span>
+                        <span className="tabular-nums">{ternoBoostProfile.numberWeights[item.number]?.toFixed(2)}×</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );

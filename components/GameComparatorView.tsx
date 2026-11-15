@@ -25,6 +25,7 @@ import {
   CalibrationResult,
   STRATEGY_LABELS,
   calibrateStrategyAgainstHistory,
+  extractTernoStatsProfile,
   getHistoricalDrawsForBacktest,
   runBacktestRange
 } from '../utils/backtestingEngine';
@@ -258,8 +259,9 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   const [calibrationResult, setCalibrationResult] = useState<CalibrationResult | null>(null);
   const [isRunningBacktest, setIsRunningBacktest] = useState<boolean>(false);
   const [isCalibrating, setIsCalibrating] = useState<boolean>(false);
-  const [backtestResultFilter, setBacktestResultFilter] = useState<'all' | 'min_target' | 'prizes'>('all');
+  const [backtestResultFilter, setBacktestResultFilter] = useState<'all' | 'exact_terno' | 'min_target' | 'prizes'>('all');
   const [backtestSortBy, setBacktestSortBy] = useState<'contest_desc' | 'hits_desc'>('contest_desc');
+  const [ternoFilterThreshold, setTernoFilterThreshold] = useState<number>(isLotofacil ? 11 : 3);
   const [savedContestIds, setSavedContestIds] = useState<Set<number>>(new Set());
   const [appliedLogicToast, setAppliedLogicToast] = useState<string | null>(null);
 
@@ -272,6 +274,8 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
       setStartContest(availableDraws[defaultStartIdx].contest);
     }
     setTargetHitsGoal(isLotofacil ? 12 : 4);
+    setTernoFilterThreshold(isLotofacil ? 11 : 3);
+    setBacktestResultFilter('all');
     setBacktestSummary(null);
     setCalibrationResult(null);
     setSavedContestIds(new Set());
@@ -390,6 +394,9 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
 
     if (backtestResultFilter === 'prizes') {
       rows = rows.filter(r => r.isPrize);
+    } else if (backtestResultFilter === 'exact_terno') {
+      const exactHit = isLotofacil ? 11 : 3;
+      rows = rows.filter(r => r.hits === exactHit);
     } else if (backtestResultFilter === 'min_target') {
       const minThreshold = isLotofacil ? 11 : 3;
       rows = rows.filter(r => r.hits >= minThreshold);
@@ -404,6 +411,42 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
 
     return rows;
   }, [backtestSummary, backtestResultFilter, backtestSortBy, isLotofacil]);
+
+  const ternoExtractedProfile = useMemo(() => {
+    if (!backtestSummary) return null;
+    return extractTernoStatsProfile(backtestSummary, ternoFilterThreshold);
+  }, [backtestSummary, ternoFilterThreshold]);
+
+  const isTernoBoostCurrentlyActive = Boolean(
+    logicOptions?.useTernoStatsBoost &&
+    logicOptions.ternoBoostProfile?.lottery === lottery
+  );
+
+  const handleApplyTernoStatsToAnalyticsAndGenerator = () => {
+    if (!ternoExtractedProfile || !onUpdateLogicOptions) return;
+    const updated: GeneratorLogic = {
+      ...(logicOptions || DEFAULT_LOGIC),
+      calculationStrategy: testStrategy,
+      strictPlausibilityFilter: usePlausibilityTest,
+      useTernoStatsBoost: true,
+      ternoBoostProfile: ternoExtractedProfile
+    };
+    onUpdateLogicOptions(updated);
+    setAppliedLogicToast(
+      `Estatísticas de ${ternoExtractedProfile.ternoSimulationsCount} simulações (${ternoExtractedProfile.minHitsThreshold}+ acertos) aplicadas na Análise Avançada e no Gerador!`
+    );
+    setTimeout(() => setAppliedLogicToast(null), 5000);
+  };
+
+  const handleToggleTernoBoostOff = () => {
+    if (!onUpdateLogicOptions || !logicOptions) return;
+    onUpdateLogicOptions({
+      ...logicOptions,
+      useTernoStatsBoost: false
+    });
+    setAppliedLogicToast('Reforço por simulações de Terno desativado.');
+    setTimeout(() => setAppliedLogicToast(null), 3500);
+  };
 
   const distributionTiers = useMemo(() => {
     if (!backtestSummary) return [];
@@ -825,10 +868,188 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                       }`}
                     >
                       <span className="text-[10px] font-black uppercase block">{item.label}</span>
-                      <span className="text-xl font-black block mt-0.5">{item.count}</span>
+                      <span className="text-xl font-black block mt-0.5 tabular-nums">{item.count}</span>
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Filtro de Aprendizado Estatístico: Simulações que acertaram Terno (3+ dezenas) */}
+              <div className="bg-white rounded-3xl p-5 sm:p-6 border border-emerald-200 shadow-sm space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span className="font-bold text-emerald-800">Filtro de Reforço Estatístico</span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        {ternoExtractedProfile
+                          ? `${ternoExtractedProfile.ternoSimulationsCount} de ${ternoExtractedProfile.sourceSimulationsCount} simulações (${((ternoExtractedProfile.ternoSimulationsCount / Math.max(1, ternoExtractedProfile.sourceSimulationsCount)) * 100).toFixed(1)}%)`
+                          : `0 de ${backtestSummary.totalContests} simulações atingiram ${ternoFilterThreshold}+ acertos`}
+                      </span>
+                    </div>
+                    <h4 className="text-base font-black text-slate-900 mt-0.5">
+                      Estatísticas das Simulações com {isLotofacil ? `${ternoFilterThreshold}+ Acertos` : (ternoFilterThreshold === 3 ? 'Terno (3+ Dezenas)' : `${ternoFilterThreshold}+ Dezenas`)}
+                    </h4>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Isola somente as simulações que acertaram o mínimo escolhido e extrai suas dezenas, soma, paridade e duques para reforçar a Análise Avançada e o Gerador Inteligente.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={ternoFilterThreshold}
+                      onChange={(e) => setTernoFilterThreshold(Number(e.target.value))}
+                      className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 outline-none"
+                      aria-label="Mínimo de acertos para o filtro"
+                    >
+                      {isLotofacil ? (
+                        <>
+                          <option value={11}>Base: 11+ Acertos</option>
+                          <option value={12}>Base: 12+ Acertos</option>
+                          <option value={13}>Base: 13+ Acertos</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value={3}>Base: Terno (3+ Dezenas)</option>
+                          <option value={4}>Base: Quadra (4+ Dezenas)</option>
+                        </>
+                      )}
+                    </select>
+
+                    {ternoExtractedProfile && (
+                      <button
+                        type="button"
+                        onClick={() => setBacktestResultFilter(ternoFilterThreshold === 3 || ternoFilterThreshold === 11 ? 'exact_terno' : 'min_target')}
+                        className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer whitespace-nowrap"
+                      >
+                        Ver só essas {ternoExtractedProfile.ternoSimulationsCount} na tabela
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {ternoExtractedProfile ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50">
+                        <span className="text-[11px] font-semibold text-slate-500 block">Soma Média (Faixa)</span>
+                        <p className="text-base font-black text-slate-900 mt-0.5 tabular-nums">
+                          {ternoExtractedProfile.avgSum}{' '}
+                          <span className="text-xs font-semibold text-slate-500">
+                            ({ternoExtractedProfile.targetSumMin}–{ternoExtractedProfile.targetSumMax})
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50">
+                        <span className="text-[11px] font-semibold text-slate-500 block">Pares Dominantes</span>
+                        <p className="text-base font-black text-slate-900 mt-0.5 tabular-nums">
+                          {ternoExtractedProfile.preferredEvenCounts.map(e => `${e}P/${ticketSize - e}I`).join(' · ')}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50">
+                        <span className="text-[11px] font-semibold text-slate-500 block">Média Moldura</span>
+                        <p className="text-base font-black text-slate-900 mt-0.5 tabular-nums">
+                          {ternoExtractedProfile.avgFrameCount} dezenas
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50">
+                        <span className="text-[11px] font-semibold text-slate-500 block">Média Primos</span>
+                        <p className="text-base font-black text-slate-900 mt-0.5 tabular-nums">
+                          {ternoExtractedProfile.avgPrimesCount} dezenas
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block mb-2">
+                          Dezenas que mais geraram acertos nos {isLotofacil ? `${ternoFilterThreshold}+` : 'Ternos'}:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ternoExtractedProfile.matchedHotNumbers.map(n => (
+                            <span
+                              key={`matched-hot-${n}`}
+                              className="w-8 h-8 rounded-lg bg-emerald-600 text-white font-mono text-xs font-black flex items-center justify-center tabular-nums"
+                              title={`Peso reforçado: ${ternoExtractedProfile.numberWeights[n]}x`}
+                            >
+                              {n.toString().padStart(2, '0')}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block mb-2">
+                          Dezenas & Duques mais presentes nas combinações:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ternoExtractedProfile.topNumbers.map(n => (
+                            <span
+                              key={`top-terno-${n}`}
+                              className="w-8 h-8 rounded-lg bg-slate-900 text-white font-mono text-xs font-bold flex items-center justify-center tabular-nums"
+                            >
+                              {n.toString().padStart(2, '0')}
+                            </span>
+                          ))}
+                        </div>
+                        {ternoExtractedProfile.topPairs.length > 0 && (
+                          <p className="text-[11px] text-slate-500 mt-2 font-mono tabular-nums">
+                            Duques frequentes:{' '}
+                            {ternoExtractedProfile.topPairs
+                              .slice(0, 5)
+                              .map(([a, b]) => `${a.toString().padStart(2, '0')}-${b.toString().padStart(2, '0')}`)
+                              .join(' · ')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                      <div className="text-xs text-slate-600">
+                        {isTernoBoostCurrentlyActive ? (
+                          <span className="font-bold text-emerald-700">
+                            Reforço ativo na Análise Avançada e no Gerador ({logicOptions?.ternoBoostProfile?.ternoSimulationsCount} simulações base).
+                          </span>
+                        ) : (
+                          <span>
+                            Clique ao lado para alimentar a Análise Avançada e aumentar o peso dessas dezenas no Gerador.
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isTernoBoostCurrentlyActive && (
+                          <button
+                            type="button"
+                            onClick={handleToggleTernoBoostOff}
+                            className="px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer whitespace-nowrap"
+                          >
+                            Desativar Reforço
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleApplyTernoStatsToAnalyticsAndGenerator}
+                          className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center justify-center gap-2 shadow-sm cursor-pointer whitespace-nowrap"
+                        >
+                          <CheckCircle2 size={15} />
+                          <span>
+                            {isTernoBoostCurrentlyActive
+                              ? 'Atualizar Análise Avançada com Estas Simulações'
+                              : 'Usar Estatísticas do Terno na Análise Avançada & Gerador'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Nenhuma simulação neste intervalo atingiu {ternoFilterThreshold}+ acertos. Amplie o intervalo de concursos ou execute a calibração automática para capturar combinações com Terno+.
+                  </p>
+                )}
               </div>
 
               {/* Filtros e Lista Concurso a Concurso */}
@@ -840,13 +1061,19 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                     </span>
                     {[
                       { id: 'all', label: `Todos (${backtestSummary.results.length})` },
+                      {
+                        id: 'exact_terno',
+                        label: isLotofacil
+                          ? `11 Acertos (${backtestSummary.hitsDistribution[11] || 0})`
+                          : `3 Acertos - Terno (${backtestSummary.hitsDistribution[3] || 0})`
+                      },
                       { id: 'min_target', label: isLotofacil ? '11+ Acertos' : '3+ Acertos' },
                       { id: 'prizes', label: `Premiados (${backtestSummary.totalPrizes})` }
                     ].map(f => (
                       <button
                         key={f.id}
                         type="button"
-                        onClick={() => setBacktestResultFilter(f.id as 'all' | 'min_target' | 'prizes')}
+                        onClick={() => setBacktestResultFilter(f.id as 'all' | 'exact_terno' | 'min_target' | 'prizes')}
                         className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
                           backtestResultFilter === f.id
                             ? 'bg-slate-900 text-white'

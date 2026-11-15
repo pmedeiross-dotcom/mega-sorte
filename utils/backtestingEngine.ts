@@ -1,10 +1,11 @@
-import { CalculationStrategy, GeneratorLogic, LotteryType, OfficialDrawResult } from '../types';
+import { CalculationStrategy, GeneratorLogic, LotteryType, OfficialDrawResult, TernoBoostProfile } from '../types';
 import { generateGameWithRules } from './lotteryRules';
 import { generateMaisMilionariaGameWithRules } from './maisMilionariaRules';
 import { generateLotofacilWithRules } from './lotofacilRules';
-import { buildDrawsListWithLatest } from './megaSenaAdvancedAnalytics';
-import { buildMaisMilionariaDrawsListWithLatest } from './maisMilionariaAdvancedAnalytics';
+import { buildDrawsListWithLatest, FRAME_NUMBERS, PRIME_NUMBERS } from './megaSenaAdvancedAnalytics';
+import { buildMaisMilionariaDrawsListWithLatest, MAIS_MILIONARIA_FRAME, MAIS_MILIONARIA_PRIME_NUMBERS } from './maisMilionariaAdvancedAnalytics';
 import { buildLotofacilDrawsListWithLatest } from './lotofacilContestsData';
+import { LOTOFACIL_FRAME, LOTOFACIL_PRIMES } from './lotofacilOfficialStats';
 import { MAIS_MILIONARIA_OFFICIAL_DRAWS } from './maisMilionariaContestsData';
 import { isGamePlausible } from './plausibilityFilter';
 
@@ -507,3 +508,145 @@ export function calibrateStrategyAgainstHistory(params: {
     roundLogs
   };
 }
+
+/**
+ * Extrai o perfil estatístico das simulações que acertaram pelo menos `minHitsThreshold`
+ * dezenas (ex: Terno = 3 acertos na Mega-Sena/+Milionária, ou 11+ na Lotofácil),
+ * para alimentar a Análise Avançada e o Gerador Inteligente.
+ */
+export function analyzeTernoFilterFromBets(
+  simulations: Array<{ numbers: number[]; matchedNumbers?: number[]; hits: number }>,
+  lottery: LotteryType,
+  totalSimulationsCount: number,
+  minHitsThreshold: number = lottery === 'lotofacil' ? 11 : 3
+): TernoBoostProfile | null {
+  const qualifying = simulations.filter(s => s.hits >= minHitsThreshold);
+  if (qualifying.length === 0) return null;
+
+  const maxNum = lottery === 'lotofacil' ? 25 : (lottery === 'maismilionaria' ? 50 : 60);
+  const frameSet = new Set(
+    lottery === 'lotofacil' ? LOTOFACIL_FRAME : (lottery === 'maismilionaria' ? MAIS_MILIONARIA_FRAME : FRAME_NUMBERS)
+  );
+  const primeSet = new Set(
+    lottery === 'lotofacil' ? LOTOFACIL_PRIMES : (lottery === 'maismilionaria' ? MAIS_MILIONARIA_PRIME_NUMBERS : PRIME_NUMBERS)
+  );
+
+  const betFreq: Record<number, number> = {};
+  const matchedFreq: Record<number, number> = {};
+  const pairFreq: Record<string, { pair: [number, number]; count: number }> = {};
+  const evenCountFreq: Record<number, number> = {};
+
+  let sumTotal = 0;
+  let minSum = Infinity;
+  let maxSum = -Infinity;
+  let frameTotal = 0;
+  let primesTotal = 0;
+
+  qualifying.forEach(sim => {
+    const nums = [...sim.numbers].sort((a, b) => a - b);
+    const sum = nums.reduce((a, b) => a + b, 0);
+    sumTotal += sum;
+    if (sum < minSum) minSum = sum;
+    if (sum > maxSum) maxSum = sum;
+
+    const evens = nums.filter(n => n % 2 === 0).length;
+    evenCountFreq[evens] = (evenCountFreq[evens] || 0) + 1;
+
+    frameTotal += nums.filter(n => frameSet.has(n)).length;
+    primesTotal += nums.filter(n => primeSet.has(n)).length;
+
+    nums.forEach(n => {
+      betFreq[n] = (betFreq[n] || 0) + 1;
+    });
+
+    (sim.matchedNumbers || []).forEach(n => {
+      matchedFreq[n] = (matchedFreq[n] || 0) + 1;
+    });
+
+    // Coocorrência de pares dentro das combinações que acertaram Terno+
+    for (let i = 0; i < nums.length; i++) {
+      for (let j = i + 1; j < nums.length; j++) {
+        const key = `${nums[i]}-${nums[j]}`;
+        if (!pairFreq[key]) {
+          pairFreq[key] = { pair: [nums[i], nums[j]], count: 0 };
+        }
+        pairFreq[key].count++;
+      }
+    }
+  });
+
+  const topLimit = lottery === 'lotofacil' ? 15 : 12;
+  const topNumbers = Object.entries(betFreq)
+    .map(([n, c]) => ({ n: Number(n), c }))
+    .sort((a, b) => b.c - a.c || a.n - b.n)
+    .slice(0, topLimit)
+    .map(x => x.n);
+
+  const matchedHotNumbers = Object.entries(matchedFreq)
+    .map(([n, c]) => ({ n: Number(n), c }))
+    .sort((a, b) => b.c - a.c || (betFreq[b.n] || 0) - (betFreq[a.n] || 0) || a.n - b.n)
+    .slice(0, 10)
+    .map(x => x.n);
+
+  const maxBetCount = Math.max(...Object.values(betFreq), 1);
+  const maxMatchedCount = Math.max(...Object.values(matchedFreq), 1);
+
+  const numberWeights: Record<number, number> = {};
+  for (let num = 1; num <= maxNum; num++) {
+    const betRatio = (betFreq[num] || 0) / maxBetCount;
+    const matchedRatio = (matchedFreq[num] || 0) / maxMatchedCount;
+    // Peso base 1.0; acertos efetivos no terno pesam mais (+0.85) e presença nas apostas vencedoras soma (+0.45)
+    const boost = 1 + matchedRatio * 0.85 + betRatio * 0.45;
+    numberWeights[num] = Number(boost.toFixed(3));
+  }
+
+  const avgSum = Math.round(sumTotal / qualifying.length);
+  const pad = lottery === 'lotofacil' ? 12 : 18;
+  const targetSumMin = Math.max(0, Math.min(minSum, avgSum - pad));
+  const targetSumMax = Math.max(maxSum, avgSum + pad);
+
+  const preferredEvenCounts = Object.entries(evenCountFreq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([even]) => Number(even));
+
+  const topPairs = Object.values(pairFreq)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map(x => x.pair);
+
+  return {
+    lottery,
+    sourceSimulationsCount: totalSimulationsCount,
+    ternoSimulationsCount: qualifying.length,
+    minHitsThreshold,
+    topNumbers,
+    matchedHotNumbers: matchedHotNumbers.length > 0 ? matchedHotNumbers : topNumbers.slice(0, 8),
+    numberWeights,
+    targetSumMin,
+    targetSumMax,
+    avgSum,
+    preferredEvenCounts,
+    avgFrameCount: +(frameTotal / qualifying.length).toFixed(1),
+    avgPrimesCount: +(primesTotal / qualifying.length).toFixed(1),
+    topPairs,
+    updatedAt: Date.now()
+  };
+}
+
+export function extractTernoStatsProfile(
+  summary: BacktestSummary,
+  minHitsThreshold: number = summary.lottery === 'lotofacil' ? 11 : 3
+): TernoBoostProfile | null {
+  return analyzeTernoFilterFromBets(
+    summary.results.map(r => ({
+      numbers: r.generatedNumbers,
+      matchedNumbers: r.matchedNumbers,
+      hits: r.hits
+    })),
+    summary.lottery,
+    summary.totalContests,
+    minHitsThreshold
+  );
+}
+

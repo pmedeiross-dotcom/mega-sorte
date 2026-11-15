@@ -67,6 +67,7 @@ import {
 } from './utils/lotofacilRules';
 import { LOTOFACIL_FREQUENCY_DATA } from './utils/lotofacilOfficialStats';
 import { analyzeGamePlausibility, isGamePlausible } from './utils/plausibilityFilter';
+import { analyzeTernoFilterFromBets } from './utils/backtestingEngine';
 import NumberBall from './components/NumberBall';
 import BetCard from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
@@ -1106,9 +1107,40 @@ const App: React.FC = () => {
     return result.map(item => item.bet);
   }, [history, currentLottery, activeRefNumbers, activeRefTrevos, checkerHitsFilter, checkerHitsOrder, onlyPrizes]);
 
+  const handleExtractTernoStatsFromChecker = () => {
+    const refSet = new Set(activeRefNumbers);
+    const relevant = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+    const minThreshold = currentLottery === 'lotofacil' ? 11 : 3;
+    const mapped = relevant.map(bet => {
+      const matched = bet.numbers.filter(n => refSet.has(n));
+      return {
+        numbers: bet.numbers,
+        matchedNumbers: matched,
+        hits: matched.length
+      };
+    });
+
+    const profile = analyzeTernoFilterFromBets(mapped, currentLottery, relevant.length, minThreshold);
+    if (!profile) {
+      showToast(`Nenhuma aposta conferida atingiu ${minThreshold}+ acertos nesta modalidade ainda.`, 'info');
+      return;
+    }
+
+    setLogicOptions(prev => ({
+      ...prev,
+      useTernoStatsBoost: true,
+      ternoBoostProfile: profile
+    }));
+    showToast(
+      `Estatísticas de ${profile.ternoSimulationsCount} de ${profile.sourceSimulationsCount} jogos (${minThreshold}+ acertos) aplicadas na Análise Avançada e Gerador!`,
+      'success'
+    );
+  };
+
   // Alternar todas as regras
   const toggleAllRules = (enable: boolean) => {
-    setLogicOptions({
+    setLogicOptions(prev => ({
+      ...prev,
       repeat1to2: enable,
       balanceEvenOdd: enable,
       sum160to240: enable,
@@ -1123,12 +1155,31 @@ const App: React.FC = () => {
       paretoTopSelection: enable,
       includeCycleDezenas: enable,
       multiplesOfThreeBalance: enable,
-      rowAndColDispersion: enable
-    });
+      rowAndColDispersion: enable,
+      ...(prev.ternoBoostProfile ? { useTernoStatsBoost: enable } : {})
+    }));
     showToast(enable ? "Todas as 15 regras estatísticas e analíticas foram ativadas!" : "Todas as regras foram desativadas.", 'info');
   };
 
-  const activeRulesCount = Object.values(logicOptions).filter(Boolean).length;
+  const activeRulesCount = [
+    logicOptions.repeat1to2,
+    logicOptions.balanceEvenOdd,
+    logicOptions.sum160to240,
+    logicOptions.spreadDistribution,
+    logicOptions.concentrate20to50,
+    logicOptions.max2Consecutive,
+    logicOptions.max2IdenticalEndings,
+    logicOptions.preferHistoricalHotNumbers,
+    logicOptions.useAdvancedDuques,
+    logicOptions.frameAndCenterBalance,
+    logicOptions.balancePrimesAndFibonacci,
+    logicOptions.paretoTopSelection,
+    logicOptions.includeCycleDezenas,
+    logicOptions.multiplesOfThreeBalance,
+    logicOptions.rowAndColDispersion,
+    logicOptions.strictPlausibilityFilter !== false,
+    Boolean(logicOptions.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === currentLottery)
+  ].filter(Boolean).length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col items-center">
@@ -2737,6 +2788,41 @@ const App: React.FC = () => {
                       </span>
                     </div>
                   </label>
+                  {/* Regra 10 - Reforço Estatístico das Simulações que Acertaram Terno (3+ dezenas) */}
+                  <div className="p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/40 col-span-1 sm:col-span-2 space-y-1.5">
+                    <label className="flex items-start space-x-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(logicOptions.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === currentLottery)}
+                        disabled={!logicOptions.ternoBoostProfile || logicOptions.ternoBoostProfile.lottery !== currentLottery}
+                        onChange={(e) => setLogicOptions({ ...logicOptions, useTernoStatsBoost: e.target.checked })}
+                        className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 disabled:opacity-40"
+                      />
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-black text-emerald-950">
+                            Reforço por Simulações de Terno ({currentLottery === 'lotofacil' ? '11+ Acertos' : '3+ Dezenas'})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('comparator')}
+                            className="text-[11px] font-black text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
+                          >
+                            {logicOptions.ternoBoostProfile?.lottery === currentLottery ? 'Recalibrar no Backtesting' : 'Capturar no Backtesting'}
+                          </button>
+                        </div>
+                        {logicOptions.ternoBoostProfile?.lottery === currentLottery ? (
+                          <span className="text-[10px] text-slate-600 block mt-0.5 tabular-nums">
+                            Base: {logicOptions.ternoBoostProfile.ternoSimulationsCount} de {logicOptions.ternoBoostProfile.sourceSimulationsCount} simulações · Soma {logicOptions.ternoBoostProfile.targetSumMin}–{logicOptions.ternoBoostProfile.targetSumMax} · Foco: {logicOptions.ternoBoostProfile.matchedHotNumbers.slice(0, 6).map(n => n.toString().padStart(2, '0')).join(', ')}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 block mt-0.5">
+                            Execute o Backtesting (ou use a aba Conferir) para extrair as estatísticas das combinações que acertaram o Terno e usá-las no Gerador e na Análise Avançada.
+                          </span>
+                        )}
+                      </div>
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2763,6 +2849,16 @@ const App: React.FC = () => {
             latestDraw={activeOfficialDraw} 
             lottery={currentLottery}
             history={history.filter(b => (b.lottery || 'megasena') === currentLottery)}
+            ternoBoostProfile={
+              logicOptions.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === currentLottery
+                ? logicOptions.ternoBoostProfile
+                : undefined
+            }
+            onDisableTernoBoost={() => {
+              setLogicOptions(prev => ({ ...prev, useTernoStatsBoost: false }));
+              showToast("Reforço por simulações de Terno desativado.", 'info');
+            }}
+            onGoToBacktesting={() => setActiveTab('comparator')}
           />
         )}
 
@@ -3416,9 +3512,23 @@ const App: React.FC = () => {
                   <span>Exibir somente jogos premiados</span>
                 </label>
 
-                <span className="text-xs font-semibold text-slate-500">
-                  Exibindo {checkerFilteredHistory.length} de {checkerHitCounts.total} apostas nesta modalidade
-                </span>
+                <div className="flex flex-wrap items-center gap-3">
+                  {(currentLottery === 'lotofacil' ? checkerHitCounts.elevenPlus > 0 : checkerHitCounts.threePlus > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleExtractTernoStatsFromChecker}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-colors cursor-pointer"
+                    >
+                      {currentLottery === 'lotofacil'
+                        ? `Usar Estatísticas dos ${checkerHitCounts.elevenPlus} Jogos (11+) na Análise Avançada`
+                        : `Usar Estatísticas dos ${checkerHitCounts.threePlus} Ternos (3+) na Análise Avançada`}
+                    </button>
+                  )}
+
+                  <span className="text-xs font-semibold text-slate-500">
+                    Exibindo {checkerFilteredHistory.length} de {checkerHitCounts.total} apostas nesta modalidade
+                  </span>
+                </div>
               </div>
             </div>
 

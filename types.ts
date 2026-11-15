@@ -64,6 +64,24 @@ export interface Bet {
   isCloudSynced?: boolean;
 }
 
+export interface TernoBoostProfile {
+  lottery: LotteryType;
+  sourceSimulationsCount: number;
+  ternoSimulationsCount: number;
+  minHitsThreshold: number;
+  topNumbers: number[];
+  matchedHotNumbers: number[];
+  numberWeights: Record<number, number>;
+  targetSumMin: number;
+  targetSumMax: number;
+  avgSum: number;
+  preferredEvenCounts: number[];
+  avgFrameCount: number;
+  avgPrimesCount: number;
+  topPairs: Array<[number, number]>;
+  updatedAt: number;
+}
+
 export interface GeneratorLogic {
   repeat1to2: boolean;
   balanceEvenOdd: boolean;
@@ -85,6 +103,9 @@ export interface GeneratorLogic {
   calculationStrategy?: CalculationStrategy;
   // Filtro de Plausibilidade Histórica (Centralizar nos clusters de máxima densidade)
   strictPlausibilityFilter?: boolean;
+  // Reforço Estatístico a partir de Simulações de Backtesting que acertaram Terno (3+ dezenas)
+  useTernoStatsBoost?: boolean;
+  ternoBoostProfile?: TernoBoostProfile;
 }
 
 export interface OfficialDrawResult {

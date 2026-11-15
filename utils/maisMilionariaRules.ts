@@ -116,13 +116,20 @@ export function generateMaisMilionariaWithRules(
   betCount: number = 6,
   trevosCount: number = 2,
   referenceDrawNumbers: number[] = [],
-  strategy: CalculationStrategy = 'balanced'
+  strategy: CalculationStrategy = 'balanced',
+  logicOptions?: GeneratorLogic
 ): { numbers: number[]; trevos: number[]; reasoning: string; validation: MaisMilionariaValidation } {
   let bestGame: number[] = [];
   let bestScore = -1;
   let bestValidation: MaisMilionariaValidation | null = null;
 
   const candidatePool = Array.from({ length: 50 }, (_, i) => i + 1);
+  const ternoProfile = (logicOptions?.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === 'maismilionaria')
+    ? logicOptions.ternoBoostProfile
+    : undefined;
+  const ternoFocusSet = ternoProfile
+    ? new Set([...ternoProfile.matchedHotNumbers, ...ternoProfile.topNumbers])
+    : null;
 
   // Duques fortes da +Milionária
   const topDuquesPairs = [
@@ -133,8 +140,16 @@ export function generateMaisMilionariaWithRules(
   for (let attempt = 0; attempt < 350; attempt++) {
     const current: number[] = [];
 
-    // 1. Estratégia
-    if (strategy === 'cooccurrence' || attempt % 2 === 0) {
+    // 1. Semente por Reforço Terno+ ou Duque Histórico
+    if (ternoProfile && attempt % 2 === 0) {
+      if (ternoProfile.topPairs.length > 0 && Math.random() < 0.6) {
+        const pair = ternoProfile.topPairs[Math.floor(Math.random() * Math.min(4, ternoProfile.topPairs.length))];
+        pair.forEach(n => { if (n >= 1 && n <= 50 && !current.includes(n)) current.push(n); });
+      } else if (ternoProfile.matchedHotNumbers.length > 0) {
+        const hot = ternoProfile.matchedHotNumbers[Math.floor(Math.random() * ternoProfile.matchedHotNumbers.length)];
+        if (hot >= 1 && hot <= 50) current.push(hot);
+      }
+    } else if (strategy === 'cooccurrence' || attempt % 2 === 0) {
       const duque = topDuquesPairs[Math.floor(Math.random() * topDuquesPairs.length)];
       current.push(...duque);
     }
@@ -142,27 +157,45 @@ export function generateMaisMilionariaWithRules(
     // 2. Repetição do concurso anterior (0 ou 1 dezena)
     if (referenceDrawNumbers.length > 0 && Math.random() < 0.45) {
       const repNum = referenceDrawNumbers[Math.floor(Math.random() * referenceDrawNumbers.length)];
-      if (!current.includes(repNum) && repNum <= 50) {
+      if (!current.includes(repNum) && repNum <= 50 && current.length < betCount) {
         current.push(repNum);
       }
     }
 
-    // 3. Completa respeitando paridade e soma
+    // 3. Completa respeitando ponderação do Terno+ quando ativo
     const pool = candidatePool.filter(n => !current.includes(n));
-    while (current.length < betCount) {
-      const idx = Math.floor(Math.random() * pool.length);
-      current.push(pool[idx]);
-      pool.splice(idx, 1);
+    while (current.length < betCount && pool.length > 0) {
+      if (ternoProfile) {
+        const weightedPool: number[] = [];
+        for (const n of pool) {
+          const mult = ternoProfile.numberWeights[n] || 1;
+          const tickets = Math.max(1, Math.round(mult * 4));
+          for (let t = 0; t < tickets; t++) weightedPool.push(n);
+        }
+        const chosen = weightedPool[Math.floor(Math.random() * weightedPool.length)];
+        current.push(chosen);
+        const removeIdx = pool.indexOf(chosen);
+        if (removeIdx >= 0) pool.splice(removeIdx, 1);
+      } else {
+        const idx = Math.floor(Math.random() * pool.length);
+        current.push(pool[idx]);
+        pool.splice(idx, 1);
+      }
     }
 
     const sorted = [...current].sort((a, b) => a - b);
     const validation = validateMaisMilionariaBet(sorted, [1, 2], referenceDrawNumbers);
+    const ternoHits = ternoFocusSet ? sorted.filter(n => ternoFocusSet.has(n)).length : 0;
+    const ternoBonus = ternoProfile
+      ? ternoHits * 8 + (validation.sum >= ternoProfile.targetSumMin && validation.sum <= ternoProfile.targetSumMax ? 8 : 0)
+      : 0;
+    const effectiveScore = validation.advancedScore + ternoBonus;
 
-    if (validation.advancedScore > bestScore) {
-      bestScore = validation.advancedScore;
+    if (effectiveScore > bestScore) {
+      bestScore = effectiveScore;
       bestGame = sorted;
       bestValidation = validation;
-      if (validation.advancedScore >= 95) break;
+      if (!ternoProfile && validation.advancedScore >= 95) break;
     }
   }
 
@@ -176,7 +209,10 @@ export function generateMaisMilionariaWithRules(
   }
   trevos.sort((a, b) => a - b);
 
-  const reasoning = `Aposta +Milionária gerada com ${bestValidation?.advancedScore}% de conformidade analítica. Soma: ${bestValidation?.sum} (Padrão Áureo 120-185), Paridade: ${bestValidation?.evenCount}P/${bestValidation?.oddCount}I, ${bestValidation?.frameCount} na Moldura e Trevos [${trevos.join(', ')}].`;
+  const ternoNote = ternoProfile
+    ? ` • Reforço Terno+ (${ternoProfile.ternoSimulationsCount}/${ternoProfile.sourceSimulationsCount} sim.)`
+    : '';
+  const reasoning = `Aposta +Milionária gerada com ${bestValidation?.advancedScore}% de conformidade analítica. Soma: ${bestValidation?.sum} (Padrão Áureo 120-185), Paridade: ${bestValidation?.evenCount}P/${bestValidation?.oddCount}I, ${bestValidation?.frameCount} na Moldura e Trevos [${trevos.join(', ')}]${ternoNote}.`;
 
   return {
     numbers: bestGame,
@@ -192,7 +228,7 @@ export function generateMaisMilionariaGameWithRules(
   referenceDrawNumbers: number[] = []
 ) {
   const strategy = logicOptions?.calculationStrategy || 'balanced';
-  const result = generateMaisMilionariaWithRules(betCount, 2, referenceDrawNumbers, strategy);
+  const result = generateMaisMilionariaWithRules(betCount, 2, referenceDrawNumbers, strategy, logicOptions);
   return {
     numbers: result.numbers,
     trevos: result.trevos,

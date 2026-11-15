@@ -234,6 +234,7 @@ export function generateLotofacilWithRules(
 } {
   let referenceDrawNumbers: number[] = [];
   let strategy: CalculationStrategy = 'balanced';
+  let logicObj: GeneratorLogic | undefined;
 
   if (Array.isArray(logicOrRef)) {
     referenceDrawNumbers = logicOrRef;
@@ -241,6 +242,7 @@ export function generateLotofacilWithRules(
       strategy = maybeRefNumbers as CalculationStrategy;
     }
   } else if (logicOrRef && typeof logicOrRef === 'object') {
+    logicObj = logicOrRef;
     if (logicOrRef.calculationStrategy) {
       strategy = logicOrRef.calculationStrategy;
     }
@@ -248,6 +250,13 @@ export function generateLotofacilWithRules(
       referenceDrawNumbers = maybeRefNumbers;
     }
   }
+
+  const ternoProfile = (logicObj?.useTernoStatsBoost && logicObj.ternoBoostProfile?.lottery === 'lotofacil')
+    ? logicObj.ternoBoostProfile
+    : undefined;
+  const ternoFocusSet = ternoProfile
+    ? new Set([...ternoProfile.matchedHotNumbers, ...ternoProfile.topNumbers])
+    : null;
 
   const count = Math.min(20, Math.max(15, betCount));
   const candidatePool = Array.from({ length: 25 }, (_, i) => i + 1);
@@ -266,8 +275,14 @@ export function generateLotofacilWithRules(
   for (let attempt = 0; attempt < 500; attempt++) {
     const selected = new Set<number>();
 
-    // 1. Injeta duques fortes de acordo com a estratégia
-    if (strategy === 'cooccurrence' || attempt % 3 === 0) {
+    // 1. Injeta duques fortes ou dezenas foco do perfil de simulações premiadas
+    if (ternoProfile && attempt % 2 === 0) {
+      const focusList = [...ternoProfile.matchedHotNumbers, ...ternoProfile.topNumbers].filter(n => n >= 1 && n <= 25);
+      const shuffledFocus = focusList.sort(() => Math.random() - 0.5);
+      for (let i = 0; i < Math.min(4, shuffledFocus.length); i++) {
+        if (selected.size < count) selected.add(shuffledFocus[i]);
+      }
+    } else if (strategy === 'cooccurrence' || attempt % 3 === 0) {
       const pair = goldenPairsLotofacil[Math.floor(Math.random() * goldenPairsLotofacil.length)];
       pair.forEach(n => selected.add(n));
     }
@@ -311,13 +326,16 @@ export function generateLotofacilWithRules(
 
     const currentGame = Array.from(selected).sort((a, b) => a - b);
     const validation = validateLotofacilBet(currentGame, referenceDrawNumbers);
+    const ternoHits = ternoFocusSet ? currentGame.filter(n => ternoFocusSet.has(n)).length : 0;
+    const ternoBonus = ternoProfile ? ternoHits * 3 : 0;
+    const effectiveScore = validation.advancedScore + ternoBonus;
 
-    if (validation.advancedScore > bestScore) {
-      bestScore = validation.advancedScore;
+    if (effectiveScore > bestScore) {
+      bestScore = effectiveScore;
       bestNumbers = currentGame;
       bestValidation = validation;
 
-      if (validation.passedAllRules && validation.advancedScore >= 95) {
+      if (!ternoProfile && validation.passedAllRules && validation.advancedScore >= 95) {
         break; // Excelente combinação encontrada
       }
     }
@@ -329,7 +347,10 @@ export function generateLotofacilWithRules(
   const finalValidation = bestValidation || validateLotofacilBet(finalNumbers, referenceDrawNumbers);
   const advancedMetrics = buildLotofacilBetMetrics(finalValidation, strategy);
 
-  const reasoning = `Combinação de alta precisão calibrada com ${finalValidation.frameCount} dezenas na Moldura e ${finalValidation.centerCount} no Centro, ${finalValidation.evenCount} Pares / ${finalValidation.oddCount} Ímpares, soma ${finalValidation.sum} (Zona de Ouro) e ${finalValidation.repeatedCount} repetidas do concurso anterior.`;
+  const ternoNote = ternoProfile
+    ? ` • Reforço de Simulações (${ternoProfile.ternoSimulationsCount}/${ternoProfile.sourceSimulationsCount})`
+    : '';
+  const reasoning = `Combinação de alta precisão calibrada com ${finalValidation.frameCount} dezenas na Moldura e ${finalValidation.centerCount} no Centro, ${finalValidation.evenCount} Pares / ${finalValidation.oddCount} Ímpares, soma ${finalValidation.sum} (Zona de Ouro) e ${finalValidation.repeatedCount} repetidas do concurso anterior${ternoNote}.`;
 
   return {
     numbers: finalNumbers,

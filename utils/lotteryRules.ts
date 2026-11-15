@@ -74,6 +74,9 @@ export interface GameValidationDetails {
   chiSquareConformity: number;
   smartSuggestions: string[];
   strengths: string[];
+  // Alinhamento com perfil de Terno+ das simulações
+  ternoAlignmentCount?: number;
+  ternoBoostValid?: boolean;
   // Contadores globais
   allActiveRulesPassed: boolean;
   passedRulesCount: number;
@@ -177,6 +180,17 @@ export const validateGameAgainstRules = (
   const multiplesOfThreeValid = !logic.multiplesOfThreeBalance || adv.multiplesOfThreeValid;
   const rowColValid = !logic.rowAndColDispersion || adv.rowColValid;
 
+  // 9. Reforço por Simulações que Acertaram Terno (3+ dezenas)
+  const ternoProfile = (logic.useTernoStatsBoost && logic.ternoBoostProfile?.lottery === 'megasena')
+    ? logic.ternoBoostProfile
+    : undefined;
+  let ternoAlignmentCount = 0;
+  if (ternoProfile) {
+    const ternoFocusSet = new Set([...ternoProfile.matchedHotNumbers, ...ternoProfile.topNumbers]);
+    ternoAlignmentCount = sorted.filter(n => ternoFocusSet.has(n)).length;
+  }
+  const ternoBoostValid = !ternoProfile || ternoAlignmentCount >= 2;
+
   // Contabilização de regras ativas e aprovadas
   const activeChecks = [
     { active: Boolean(logic.sum160to240), valid: sumValid },
@@ -195,6 +209,7 @@ export const validateGameAgainstRules = (
     { active: Boolean(logic.includeCycleDezenas), valid: cycleValid },
     { active: Boolean(logic.multiplesOfThreeBalance), valid: multiplesOfThreeValid },
     { active: Boolean(logic.rowAndColDispersion), valid: rowColValid },
+    { active: Boolean(ternoProfile), valid: ternoBoostValid },
   ];
 
   const activeRulesCount = activeChecks.filter(c => c.active).length;
@@ -258,6 +273,8 @@ export const validateGameAgainstRules = (
     chiSquareConformity: adv.chiSquareConformity,
     smartSuggestions: adv.smartSuggestions,
     strengths: adv.strengths,
+    ternoAlignmentCount,
+    ternoBoostValid,
     allActiveRulesPassed,
     passedRulesCount,
     activeRulesCount
@@ -346,6 +363,12 @@ const getAdvancedWeightedCandidate = (
       if (hasDuqueAffinity) {
         weight = Math.round(weight * 2.10);
       }
+    }
+
+    // Modulação por Reforço Estatístico das Simulações que Acertaram Terno (3+ dezenas)
+    if (logic.useTernoStatsBoost && logic.ternoBoostProfile && logic.ternoBoostProfile.lottery === 'megasena') {
+      const boostMultiplier = logic.ternoBoostProfile.numberWeights[num] || 1;
+      weight = Math.round(weight * boostMultiplier);
     }
 
     // 1. Concentração 20 a 50
@@ -484,6 +507,19 @@ export const generateGameWithRules = (
       }
     }
 
+    // 4b. Semente empírica das simulações com Terno (3+ acertos)
+    if (logic.useTernoStatsBoost && logic.ternoBoostProfile && logic.ternoBoostProfile.lottery === 'megasena' && Math.random() > 0.2) {
+      const tp = logic.ternoBoostProfile;
+      if (tp.topPairs.length > 0 && Math.random() > 0.45 && candidates.size + 2 <= quantity) {
+        const pair = tp.topPairs[Math.floor(Math.random() * Math.min(4, tp.topPairs.length))];
+        candidates.add(pair[0]);
+        candidates.add(pair[1]);
+      } else if (tp.matchedHotNumbers.length > 0 && candidates.size < quantity) {
+        const hot = tp.matchedHotNumbers[Math.floor(Math.random() * tp.matchedHotNumbers.length)];
+        candidates.add(hot);
+      }
+    }
+
     // 5. Preenchimento probabilístico com ponderação analítica avançada
     let fillAttempts = 0;
     while (candidates.size < quantity && fillAttempts < 100) {
@@ -528,6 +564,9 @@ export const generateGameWithRules = (
       if (logic.preferHistoricalHotNumbers) highlights.push(`${validation.historicalHotCount} no Top 20 Geral`);
       if (logic.spreadDistribution) highlights.push(`4 quadrantes`);
       if (logic.repeat1to2 && validation.repeatedCount > 0) highlights.push(`${validation.repeatedCount} repetida(s)`);
+      if (logic.useTernoStatsBoost && (validation.ternoAlignmentCount || 0) > 0) {
+        highlights.push(`${validation.ternoAlignmentCount} dezenas do Reforço Terno+`);
+      }
 
       const reason = `Gerado via Análise Avançada (3.071 concursos): ${highlights.join(' • ')}. Média de ${validation.historicalAverageDraws} sorteios históricos por dezena (Conformidade Analítica: ${validation.advancedScore}%).`;
 
@@ -540,7 +579,11 @@ export const generateGameWithRules = (
       };
     }
 
-    const compositeScore = validation.passedRulesCount * 100 + validation.advancedScore;
+    const ternoBonus = (logic.useTernoStatsBoost && logic.ternoBoostProfile?.lottery === 'megasena')
+      ? ((validation.ternoAlignmentCount || 0) * 15 +
+         (validation.sum >= logic.ternoBoostProfile.targetSumMin && validation.sum <= logic.ternoBoostProfile.targetSumMax ? 15 : 0))
+      : 0;
+    const compositeScore = validation.passedRulesCount * 100 + validation.advancedScore + ternoBonus;
     if (compositeScore > bestScore) {
       bestScore = compositeScore;
       bestAttempt = testNumbers;
