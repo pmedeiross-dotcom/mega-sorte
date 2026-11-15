@@ -223,6 +223,14 @@ const App: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'sum_desc' | 'sum_asc'>('newest');
   const [onlyPrizes, setOnlyPrizes] = useState<boolean>(false);
+  const [checkerHitsFilter, setCheckerHitsFilter] = useState<
+    'all' | '3plus' | '3' | '4' | '5' | '6' | '11plus' | '11' | '12' | '13' | '14' | '15'
+  >('all');
+  const [checkerHitsOrder, setCheckerHitsOrder] = useState<'hits_desc' | 'hits_asc' | 'newest'>('hits_desc');
+
+  useEffect(() => {
+    setCheckerHitsFilter('all');
+  }, [currentLottery]);
 
   // Estado de Autenticação e Nuvem Google Firebase
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -520,7 +528,8 @@ const App: React.FC = () => {
     numbers: number[], 
     reasoning?: string, 
     groundingUrls?: Bet['groundingUrls'],
-    advancedMetrics?: Bet['advancedMetrics']
+    advancedMetrics?: Bet['advancedMetrics'],
+    customTrevos?: number[]
   ) => {
     const { sum, sumStatus } = calculateSumData(numbers);
     const resolvedAdvancedMetrics = advancedMetrics || (
@@ -528,10 +537,11 @@ const App: React.FC = () => {
         ? validateLotofacilBet(numbers, logicOptions, activeRefNumbers).advancedMetrics
         : buildAdvancedBetMetrics(validateGameAgainstRules(numbers, logicOptions, activeRefNumbers))
     );
+    const resolvedTrevos = customTrevos && customTrevos.length > 0 ? customTrevos : selectedTrevos;
     const newBet: Bet = {
       id: Math.random().toString(36).substring(2, 11),
       numbers: [...numbers].sort((a, b) => a - b),
-      trevos: currentLottery === 'maismilionaria' ? [...selectedTrevos].sort((a, b) => a - b) : undefined,
+      trevos: currentLottery === 'maismilionaria' ? [...resolvedTrevos].sort((a, b) => a - b) : undefined,
       lottery: currentLottery,
       createdAt: Date.now(),
       type,
@@ -1026,7 +1036,75 @@ const App: React.FC = () => {
     });
 
     return result;
-  }, [history, filterType, searchTerm, sortOrder, onlyPrizes, activeRefNumbers]);
+  }, [history, currentLottery, filterType, searchTerm, sortOrder, onlyPrizes, activeRefNumbers, activeRefTrevos]);
+
+  // Contagens por faixa exata de acertos e listagem ordenada exclusiva da aba Conferir
+  const checkerHitCounts = useMemo(() => {
+    const refSet = new Set(activeRefNumbers);
+    const relevant = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+    const counts: Record<number, number> = {};
+    let threePlus = 0;
+    let elevenPlus = 0;
+
+    relevant.forEach(bet => {
+      const hits = bet.numbers.filter(n => refSet.has(n)).length;
+      counts[hits] = (counts[hits] || 0) + 1;
+      if (hits >= 3) threePlus++;
+      if (hits >= 11) elevenPlus++;
+    });
+
+    return {
+      total: relevant.length,
+      threePlus,
+      elevenPlus,
+      byHits: counts
+    };
+  }, [history, currentLottery, activeRefNumbers]);
+
+  const checkerFilteredHistory = useMemo(() => {
+    const refSet = new Set(activeRefNumbers);
+    const relevant = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+
+    let result = relevant.map(bet => ({
+      bet,
+      hits: bet.numbers.filter(n => refSet.has(n)).length
+    }));
+
+    if (checkerHitsFilter === 'all') {
+      if (onlyPrizes && activeRefNumbers.length > 0) {
+        result = result.filter(({ bet, hits }) => {
+          if (currentLottery === 'lotofacil') return hits >= 11;
+          if (currentLottery === 'maismilionaria') {
+            const tHits = (activeRefTrevos && bet.trevos)
+              ? bet.trevos.filter(t => activeRefTrevos.includes(t)).length
+              : 0;
+            return hits >= 4 || (hits === 3 && tHits >= 1) || (hits === 2 && tHits >= 1);
+          }
+          return hits >= 4;
+        });
+      }
+    } else if (checkerHitsFilter === '3plus') {
+      result = result.filter(({ hits }) => hits >= 3 && hits <= 6);
+    } else if (checkerHitsFilter === '11plus') {
+      result = result.filter(({ hits }) => hits >= 11);
+    } else {
+      const exactTarget = parseInt(checkerHitsFilter, 10);
+      if (!isNaN(exactTarget)) {
+        result = result.filter(({ hits }) => hits === exactTarget);
+      }
+    }
+
+    result.sort((a, b) => {
+      if (checkerHitsOrder === 'hits_desc') {
+        if (b.hits !== a.hits) return b.hits - a.hits;
+      } else if (checkerHitsOrder === 'hits_asc') {
+        if (a.hits !== b.hits) return a.hits - b.hits;
+      }
+      return b.bet.createdAt - a.bet.createdAt;
+    });
+
+    return result.map(item => item.bet);
+  }, [history, currentLottery, activeRefNumbers, activeRefTrevos, checkerHitsFilter, checkerHitsOrder, onlyPrizes]);
 
   // Alternar todas as regras
   const toggleAllRules = (enable: boolean) => {
@@ -2716,14 +2794,21 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* Aba do Comparador Direto de Jogos */}
+        {/* Aba do Comparador Direto de Jogos & Backtesting */}
         {activeTab === 'comparator' && (
           <GameComparatorView
             savedBets={history.filter(b => !b.lottery || b.lottery === currentLottery)}
             lottery={currentLottery}
-            onAddBet={(numbers, type, reasoning) => {
-              saveBet(type, numbers, reasoning);
-              showToast("Aposta divergente anti-colisão adicionada à sua carteira com sucesso!", 'success');
+            logicOptions={logicOptions}
+            onUpdateLogicOptions={(updated) => {
+              setLogicOptions(updated);
+              showToast("Estratégia calibrada aplicada ao Gerador Inteligente!", 'success');
+            }}
+            latestDraw={activeOfficialDraw}
+            betCount={betCount}
+            onAddBet={(numbers, type, reasoning, trevos) => {
+              saveBet(type, numbers, reasoning, undefined, undefined, trevos);
+              showToast("Aposta adicionada à sua carteira com sucesso!", 'success');
             }}
             onGoToGenerator={() => setActiveTab('play')}
           />
@@ -3234,42 +3319,134 @@ const App: React.FC = () => {
 
             {/* Gráfico de Visualização de Dados (Recharts) */}
             <FrequencyChart 
-              history={filteredHistory} 
+              history={history.filter(b => (b.lottery || 'megasena') === currentLottery)} 
               referenceDraw={activeRefNumbers} 
               lottery={currentLottery}
             />
 
-            {/* Toggle de Apenas Premiadas */}
-            <div className="flex items-center justify-between pt-2">
-              <label className="flex items-center space-x-2 text-xs font-bold text-slate-700 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={onlyPrizes} 
-                  onChange={(e) => setOnlyPrizes(e.target.checked)} 
-                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                />
-                <span>Exibir somente jogos premiados</span>
-              </label>
+            {/* Filtro por Quantidade de Acertos e Ordenação */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-600 flex items-center gap-1 mr-1">
+                    <Filter size={13} /> Filtrar Acertos:
+                  </span>
 
-              <span className="text-xs text-slate-500">
-                Apostas conferidas nesta modalidade: {filteredHistory.length}
-              </span>
+                  {(currentLottery === 'lotofacil'
+                    ? [
+                        { id: 'all', label: `Todas (${checkerHitCounts.total})` },
+                        { id: '11plus', label: `11 a 15 Acertos (${checkerHitCounts.elevenPlus})` },
+                        { id: '15', label: `15 Acertos (${checkerHitCounts.byHits[15] || 0})` },
+                        { id: '14', label: `14 Acertos (${checkerHitCounts.byHits[14] || 0})` },
+                        { id: '13', label: `13 Acertos (${checkerHitCounts.byHits[13] || 0})` },
+                        { id: '12', label: `12 Acertos (${checkerHitCounts.byHits[12] || 0})` },
+                        { id: '11', label: `11 Acertos (${checkerHitCounts.byHits[11] || 0})` }
+                      ]
+                    : [
+                        { id: 'all', label: `Todas (${checkerHitCounts.total})` },
+                        { id: '3plus', label: `3 a 6 Dezenas (${checkerHitCounts.threePlus})` },
+                        { id: '6', label: `6 Dezenas (${checkerHitCounts.byHits[6] || 0})` },
+                        { id: '5', label: `5 Dezenas (${checkerHitCounts.byHits[5] || 0})` },
+                        { id: '4', label: `4 Dezenas (${checkerHitCounts.byHits[4] || 0})` },
+                        { id: '3', label: `3 Dezenas (${checkerHitCounts.byHits[3] || 0})` }
+                      ]
+                  ).map(opt => {
+                    const isActive = checkerHitsFilter === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          setCheckerHitsFilter(opt.id as typeof checkerHitsFilter);
+                          if (opt.id !== 'all' && onlyPrizes) {
+                            setOnlyPrizes(false);
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          isActive
+                            ? currentLottery === 'lotofacil'
+                              ? 'bg-purple-600 text-white shadow-sm'
+                              : currentLottery === 'maismilionaria'
+                              ? 'bg-amber-600 text-white shadow-sm'
+                              : 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <ArrowUpDown size={14} className="text-slate-500" />
+                    <select
+                      value={checkerHitsOrder}
+                      onChange={(e) => setCheckerHitsOrder(e.target.value as 'hits_desc' | 'hits_asc' | 'newest')}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="hits_desc">
+                        {currentLottery === 'lotofacil'
+                          ? 'Ordem: Maior Acerto (15 → 11)'
+                          : 'Ordem: Maior Acerto (6 → 3)'}
+                      </option>
+                      <option value="hits_asc">
+                        {currentLottery === 'lotofacil'
+                          ? 'Ordem: Menor Acerto (11 → 15)'
+                          : 'Ordem: Menor Acerto (3 → 6)'}
+                      </option>
+                      <option value="newest">Ordem: Mais Recentes</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
+                <label className="flex items-center space-x-2 text-xs font-bold text-slate-700 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={onlyPrizes} 
+                    onChange={(e) => {
+                      setOnlyPrizes(e.target.checked);
+                      if (e.target.checked) setCheckerHitsFilter('all');
+                    }} 
+                    className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+                  />
+                  <span>Exibir somente jogos premiados</span>
+                </label>
+
+                <span className="text-xs font-semibold text-slate-500">
+                  Exibindo {checkerFilteredHistory.length} de {checkerHitCounts.total} apostas nesta modalidade
+                </span>
+              </div>
             </div>
 
             {/* Listagem com destaque nos números acertados */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-              {filteredHistory.map((bet) => (
-                <BetCard 
-                  key={bet.id} 
-                  bet={bet} 
-                  drawnNumbers={activeRefNumbers}
-                  drawnTrevos={activeRefTrevos}
-                  onDelete={handleDeleteBet} 
-                  onAnalyze={handleAnalyzeBet} 
-                  isAnalyzing={analyzingId === bet.id} 
-                />
-              ))}
-            </div>
+            {checkerFilteredHistory.length === 0 ? (
+              <div className="p-8 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 text-center space-y-2">
+                <p className="text-sm font-bold text-slate-700">
+                  Nenhuma aposta encontrada com o filtro de acertos selecionado.
+                </p>
+                <p className="text-xs text-slate-500">
+                  Selecione "Todas" ou outra quantidade de dezenas acertadas acima para visualizar seus jogos conferidos.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                {checkerFilteredHistory.map((bet) => (
+                  <BetCard 
+                    key={bet.id} 
+                    bet={bet} 
+                    drawnNumbers={activeRefNumbers}
+                    drawnTrevos={activeRefTrevos}
+                    onDelete={handleDeleteBet} 
+                    onAnalyze={handleAnalyzeBet} 
+                    isAnalyzing={analyzingId === bet.id} 
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </main>
