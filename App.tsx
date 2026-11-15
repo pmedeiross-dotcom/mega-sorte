@@ -50,6 +50,7 @@ import { Bet, GeneratorLogic, CalculationStrategy, OfficialDrawResult, LotteryTy
 import { 
   validateGameAgainstRules, 
   generateGameWithRules, 
+  generatePortfolioWithRules,
   buildAdvancedBetMetrics, 
   autoOptimizeGameNumbers 
 } from './utils/lotteryRules';
@@ -67,9 +68,9 @@ import {
 } from './utils/lotofacilRules';
 import { LOTOFACIL_FREQUENCY_DATA } from './utils/lotofacilOfficialStats';
 import { analyzeGamePlausibility, isGamePlausible } from './utils/plausibilityFilter';
-import { analyzeTernoFilterFromBets } from './utils/backtestingEngine';
+import { analyzeTernoFilterFromBets, getHistoricalDrawsForBacktest } from './utils/backtestingEngine';
 import NumberBall from './components/NumberBall';
-import BetCard from './components/BetCard';
+import BetCard, { PastComparisonSummary, PastContestMatch } from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
 import AdvancedAnalyticsView from './components/AdvancedAnalyticsView';
 import LatestOfficialDrawCard from './components/LatestOfficialDrawCard';
@@ -191,6 +192,16 @@ const App: React.FC = () => {
     };
   });
 
+  const [portfolioBatchSize, setPortfolioBatchSize] = useState<number>(78);
+  const [lastBatchCoverage, setLastBatchCoverage] = useState<{
+    totalGames: number;
+    distinctGames: number;
+    distinctNumbers: number;
+    uniquePairs: number;
+    pairCoveragePct: number;
+    giniCoefficient: number;
+  } | null>(null);
+
   // Sorteios de referência de conferência independentes para Mega-Sena, +Milionária e Lotofácil
   const [megaRefDraw, setMegaRefDraw] = useState<number[]>(latestOfficialDraw.numbers);
   const [maisMilionariaRefDraw, setMaisMilionariaRefDraw] = useState<number[]>(latestMaisMilionariaDraw.numbers);
@@ -205,6 +216,9 @@ const App: React.FC = () => {
     ? lotofacilRefDraw
     : (currentLottery === 'maismilionaria' ? maisMilionariaRefDraw : megaRefDraw);
   const activeRefTrevos = currentLottery === 'maismilionaria' ? maisMilionariaRefTrevos : undefined;
+
+  const [selectedCheckerContest, setSelectedCheckerContest] = useState<number | 'custom'>(activeOfficialDraw.contestNumber);
+  const [checkerFilterScope, setCheckerFilterScope] = useState<'selected_contest' | 'all_past'>('selected_contest');
 
   // Sincroniza inputs ao mudar de perfil de loteria
   useEffect(() => {
@@ -227,11 +241,18 @@ const App: React.FC = () => {
   const [checkerHitsFilter, setCheckerHitsFilter] = useState<
     'all' | '3plus' | '3' | '4' | '5' | '6' | '11plus' | '11' | '12' | '13' | '14' | '15'
   >('all');
-  const [checkerHitsOrder, setCheckerHitsOrder] = useState<'hits_desc' | 'hits_asc' | 'newest'>('hits_desc');
+  const [checkerHitsOrder, setCheckerHitsOrder] = useState<'hits_desc' | 'hits_asc' | 'best_past' | 'newest'>('hits_desc');
 
   useEffect(() => {
     setCheckerHitsFilter('all');
-  }, [currentLottery]);
+    setSelectedCheckerContest(
+      currentLottery === 'lotofacil'
+        ? latestLotofacilDraw.contestNumber
+        : currentLottery === 'maismilionaria'
+        ? latestMaisMilionariaDraw.contestNumber
+        : latestOfficialDraw.contestNumber
+    );
+  }, [currentLottery, latestLotofacilDraw.contestNumber, latestMaisMilionariaDraw.contestNumber, latestOfficialDraw.contestNumber]);
 
   // Estado de Autenticação e Nuvem Google Firebase
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -348,6 +369,7 @@ const App: React.FC = () => {
       saveStoredLatestOfficialDraw(updated);
       setMegaRefDraw(updated.numbers);
       setTempRefInput(updated.numbers.join(', '));
+      setSelectedCheckerContest(updated.contestNumber);
       showToast(`Concurso #${updated.contestNumber} da Mega-Sena salvo com sucesso!`, 'success');
     }
   };
@@ -356,6 +378,7 @@ const App: React.FC = () => {
     if (currentLottery === 'lotofacil') {
       setLotofacilRefDraw(latestLotofacilDraw.numbers);
       setTempRefInput(latestLotofacilDraw.numbers.join(', '));
+      setSelectedCheckerContest(latestLotofacilDraw.contestNumber);
       setIsCustomizingRef(false);
       showToast(`Conferência restaurada para o Último Concurso Oficial Caixa Lotofácil #${latestLotofacilDraw.contestNumber}!`, 'success');
     } else if (currentLottery === 'maismilionaria') {
@@ -363,11 +386,13 @@ const App: React.FC = () => {
       setMaisMilionariaRefTrevos(latestMaisMilionariaDraw.trevos || [1, 2]);
       setTempRefInput(latestMaisMilionariaDraw.numbers.join(', '));
       setTempRefTrevosInput((latestMaisMilionariaDraw.trevos || [1, 2]).join(', '));
+      setSelectedCheckerContest(latestMaisMilionariaDraw.contestNumber);
       setIsCustomizingRef(false);
       showToast(`Conferência restaurada para o Último Concurso Oficial Caixa +Milionária #${latestMaisMilionariaDraw.contestNumber}!`, 'success');
     } else {
       setMegaRefDraw(latestOfficialDraw.numbers);
       setTempRefInput(latestOfficialDraw.numbers.join(', '));
+      setSelectedCheckerContest(latestOfficialDraw.contestNumber);
       setIsCustomizingRef(false);
       showToast(`Conferência restaurada para o Último Concurso Oficial Caixa Mega-Sena #${latestOfficialDraw.contestNumber}!`, 'success');
     }
@@ -567,6 +592,99 @@ const App: React.FC = () => {
     return newBet;
   };
 
+  const saveBetsBatch = (
+    items: Array<{
+      type: Bet['type'];
+      numbers: number[];
+      reasoning?: string;
+      advancedMetrics?: Bet['advancedMetrics'];
+    }>
+  ) => {
+    const baseTime = Date.now();
+    const created: Bet[] = items.map((item, idx) => {
+      const { sum, sumStatus } = calculateSumData(item.numbers);
+      const resolvedAdvancedMetrics = item.advancedMetrics || (
+        currentLottery === 'lotofacil'
+          ? validateLotofacilBet(item.numbers, logicOptions, activeRefNumbers).advancedMetrics
+          : buildAdvancedBetMetrics(validateGameAgainstRules(item.numbers, logicOptions, activeRefNumbers))
+      );
+      return {
+        id: `${Math.random().toString(36).substring(2, 9)}_${idx}`,
+        numbers: [...item.numbers].sort((a, b) => a - b),
+        trevos: currentLottery === 'maismilionaria' ? [...selectedTrevos].sort((a, b) => a - b) : undefined,
+        lottery: currentLottery,
+        createdAt: baseTime + idx,
+        type: item.type,
+        reasoning: item.reasoning,
+        sum,
+        sumStatus,
+        advancedMetrics: resolvedAdvancedMetrics,
+        userId: currentUser?.uid,
+        isCloudSynced: Boolean(currentUser)
+      };
+    });
+
+    setHistory(prev => [...created, ...prev]);
+
+    if (currentUser) {
+      created.forEach(bet => {
+        saveBetToCloud(currentUser.uid, bet).catch(() => {});
+      });
+    }
+    return created;
+  };
+
+  const handleGeneratePortfolioBatch = () => {
+    setIsRuleGenerating(true);
+    setTimeout(() => {
+      try {
+        const size = Math.max(2, Math.min(200, portfolioBatchSize || 78));
+        if (currentLottery === 'megasena') {
+          const { games, coverage } = generatePortfolioWithRules(size, betCount, logicOptions, latestOfficialDraw.numbers);
+          saveBetsBatch(
+            games.map(g => ({
+              type: 'smart_rules',
+              numbers: g.numbers,
+              reasoning: g.reasoning,
+              advancedMetrics: g.advancedMetrics
+            }))
+          );
+          setLastBatchCoverage({
+            totalGames: coverage.totalGames,
+            distinctGames: coverage.distinctGames,
+            distinctNumbers: coverage.distinctNumbers,
+            uniquePairs: coverage.uniquePairs,
+            pairCoveragePct: coverage.pairCoveragePct,
+            giniCoefficient: coverage.giniCoefficient
+          });
+          if (games.length > 0) setSelectedNumbers(games[0].numbers);
+          showToast(
+            `Carteira de ${coverage.distinctGames}/${size} jogos distintos salva (${coverage.distinctNumbers}/60 dez. • ${coverage.pairCoveragePct.toFixed(1)}% pares únicos)!`,
+            'success'
+          );
+        } else {
+          const seen = new Set<string>();
+          const items: Array<{ type: Bet['type']; numbers: number[]; reasoning?: string; advancedMetrics?: Bet['advancedMetrics'] }> = [];
+          for (let i = 0; i < size * 4 && items.length < size; i++) {
+            const g = currentLottery === 'lotofacil'
+              ? generateLotofacilWithRules(betCount, logicOptions, latestLotofacilDraw.numbers)
+              : generateMaisMilionariaGameWithRules(betCount, logicOptions, latestMaisMilionariaDraw.numbers);
+            const k = g.numbers.join('-');
+            if (!seen.has(k)) {
+              seen.add(k);
+              items.push({ type: 'smart_rules', numbers: g.numbers, reasoning: g.reasoning, advancedMetrics: g.advancedMetrics });
+            }
+          }
+          saveBetsBatch(items);
+          if (items.length > 0) setSelectedNumbers(items[0].numbers);
+          showToast(`Carteira de ${items.length} jogos distintos salva no histórico!`, 'success');
+        }
+      } finally {
+        setIsRuleGenerating(false);
+      }
+    }, 20);
+  };
+
   const handleDeleteBet = (id: string) => {
     setHistory(h => h.filter(x => x.id !== id));
     if (currentUser) {
@@ -673,7 +791,8 @@ const App: React.FC = () => {
           const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
           saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
           setSelectedNumbers(result.numbers);
-          const strategyName = logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
+          const strategyName = logicOptions.calculationStrategy === 'combinatorial_cover' ? 'Cobertura Anti-Colisão' :
+            logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
             logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
             logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
             logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
@@ -913,6 +1032,7 @@ const App: React.FC = () => {
 
     if (isLoto) {
       setLotofacilRefDraw(uniqueNums);
+      setSelectedCheckerContest('custom');
       setIsCustomizingRef(false);
       showToast("Sorteio de referência da Lotofácil atualizado com sucesso!");
     } else if (isMais) {
@@ -927,10 +1047,12 @@ const App: React.FC = () => {
       }
       setMaisMilionariaRefDraw(uniqueNums);
       setMaisMilionariaRefTrevos(uniqueTrevos);
+      setSelectedCheckerContest('custom');
       setIsCustomizingRef(false);
       showToast("Sorteio de referência da +Milionária atualizado com sucesso!");
     } else {
       setMegaRefDraw(uniqueNums);
+      setSelectedCheckerContest('custom');
       setIsCustomizingRef(false);
       showToast("Sorteio de referência da Mega-Sena atualizado com sucesso!");
     }
@@ -1039,6 +1161,129 @@ const App: React.FC = () => {
     return result;
   }, [history, currentLottery, filterType, searchTerm, sortOrder, onlyPrizes, activeRefNumbers, activeRefTrevos]);
 
+  // Concursos históricos arquivados disponíveis para comparação na aba Conferir
+  const pastContestsForChecker = useMemo(
+    () => getHistoricalDrawsForBacktest(currentLottery, activeOfficialDraw),
+    [currentLottery, activeOfficialDraw]
+  );
+
+  const selectedCheckerDrawMeta = useMemo(() => {
+    if (selectedCheckerContest === 'custom') return null;
+    return (
+      pastContestsForChecker.find(d => d.contest === selectedCheckerContest) || {
+        contest: activeOfficialDraw.contestNumber,
+        date: activeOfficialDraw.date,
+        numbers: activeOfficialDraw.numbers,
+        trevos: activeOfficialDraw.trevos
+      }
+    );
+  }, [selectedCheckerContest, pastContestsForChecker, activeOfficialDraw]);
+
+  const handleSelectPastContestInChecker = (contestNumber: number) => {
+    const draw = pastContestsForChecker.find(d => d.contest === contestNumber);
+    if (!draw) return;
+
+    if (currentLottery === 'lotofacil') {
+      setLotofacilRefDraw(draw.numbers);
+      setTempRefInput(draw.numbers.join(', '));
+    } else if (currentLottery === 'maismilionaria') {
+      setMaisMilionariaRefDraw(draw.numbers);
+      const trevos = draw.trevos && draw.trevos.length === 2 ? draw.trevos : (latestMaisMilionariaDraw.trevos || [1, 2]);
+      setMaisMilionariaRefTrevos(trevos);
+      setTempRefInput(draw.numbers.join(', '));
+      setTempRefTrevosInput(trevos.join(', '));
+    } else {
+      setMegaRefDraw(draw.numbers);
+      setTempRefInput(draw.numbers.join(', '));
+    }
+    setSelectedCheckerContest(contestNumber);
+    setIsCustomizingRef(false);
+    showToast(`Conferindo apostas com o Concurso #${draw.contest} (${draw.date})`, 'success');
+  };
+
+  // Comparação automática de cada aposta contra TODOS os concursos passados arquivados
+  const betPastComparisons = useMemo(() => {
+    const map = new Map<string, PastComparisonSummary>();
+    const relevantBets = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+    const minNotable = currentLottery === 'lotofacil' ? 11 : 3;
+    const highThreshold = currentLottery === 'lotofacil' ? 12 : 4;
+
+    const preparedDraws = pastContestsForChecker.map(d => ({
+      draw: d,
+      numSet: new Set(d.numbers),
+      trevoSet: d.trevos ? new Set(d.trevos) : null
+    }));
+
+    let overallBest: { bet: Bet; match: PastContestMatch } | null = null;
+    let betsWithMidOrHigher = 0;
+    let betsWithHighTier = 0;
+
+    relevantBets.forEach(bet => {
+      const countsByTier: Record<number, number> = {};
+      const matches: PastContestMatch[] = [];
+
+      preparedDraws.forEach(({ draw, numSet, trevoSet }) => {
+        const matchedNumbers = bet.numbers.filter(n => numSet.has(n));
+        const hits = matchedNumbers.length;
+        countsByTier[hits] = (countsByTier[hits] || 0) + 1;
+
+        let trevosHits: number | undefined;
+        let matchedTrevos: number[] | undefined;
+        if (currentLottery === 'maismilionaria' && trevoSet && bet.trevos) {
+          matchedTrevos = bet.trevos.filter(t => trevoSet.has(t));
+          trevosHits = matchedTrevos.length;
+        }
+
+        matches.push({
+          contest: draw.contest,
+          date: draw.date,
+          hits,
+          matchedNumbers,
+          trevosHits,
+          matchedTrevos
+        });
+      });
+
+      matches.sort((a, b) => {
+        if (b.hits !== a.hits) return b.hits - a.hits;
+        if ((b.trevosHits ?? 0) !== (a.trevosHits ?? 0)) return (b.trevosHits ?? 0) - (a.trevosHits ?? 0);
+        return b.contest - a.contest;
+      });
+
+      const bestMatch = matches[0] || null;
+      const notable = matches.filter(m => m.hits >= minNotable);
+      const notableMatches = notable.length > 0 ? notable : matches.slice(0, 3);
+
+      if (bestMatch) {
+        if (bestMatch.hits >= minNotable) betsWithMidOrHigher++;
+        if (bestMatch.hits >= highThreshold) betsWithHighTier++;
+        if (
+          !overallBest ||
+          bestMatch.hits > overallBest.match.hits ||
+          (bestMatch.hits === overallBest.match.hits && (bestMatch.trevosHits ?? 0) > (overallBest.match.trevosHits ?? 0)) ||
+          (bestMatch.hits === overallBest.match.hits && bestMatch.contest > overallBest.match.contest)
+        ) {
+          overallBest = { bet, match: bestMatch };
+        }
+      }
+
+      map.set(bet.id, {
+        totalContestsChecked: pastContestsForChecker.length,
+        bestMatch,
+        notableMatches,
+        countsByTier
+      });
+    });
+
+    return {
+      map,
+      overallBest,
+      betsWithMidOrHigher,
+      betsWithHighTier,
+      totalBets: relevantBets.length
+    };
+  }, [history, currentLottery, pastContestsForChecker]);
+
   // Contagens por faixa exata de acertos e listagem ordenada exclusiva da aba Conferir
   const checkerHitCounts = useMemo(() => {
     const refSet = new Set(activeRefNumbers);
@@ -1048,7 +1293,9 @@ const App: React.FC = () => {
     let elevenPlus = 0;
 
     relevant.forEach(bet => {
-      const hits = bet.numbers.filter(n => refSet.has(n)).length;
+      const hits = checkerFilterScope === 'all_past'
+        ? (betPastComparisons.map.get(bet.id)?.bestMatch?.hits ?? 0)
+        : bet.numbers.filter(n => refSet.has(n)).length;
       counts[hits] = (counts[hits] || 0) + 1;
       if (hits >= 3) threePlus++;
       if (hits >= 11) elevenPlus++;
@@ -1060,22 +1307,34 @@ const App: React.FC = () => {
       elevenPlus,
       byHits: counts
     };
-  }, [history, currentLottery, activeRefNumbers]);
+  }, [history, currentLottery, activeRefNumbers, checkerFilterScope, betPastComparisons]);
 
   const checkerFilteredHistory = useMemo(() => {
     const refSet = new Set(activeRefNumbers);
     const relevant = history.filter(b => (b.lottery || 'megasena') === currentLottery);
 
-    let result = relevant.map(bet => ({
-      bet,
-      hits: bet.numbers.filter(n => refSet.has(n)).length
-    }));
+    let result = relevant.map(bet => {
+      const selectedHits = bet.numbers.filter(n => refSet.has(n)).length;
+      const bestPastHits = betPastComparisons.map.get(bet.id)?.bestMatch?.hits ?? 0;
+      const hits = checkerFilterScope === 'all_past' ? bestPastHits : selectedHits;
+      return {
+        bet,
+        hits,
+        selectedHits,
+        bestPastHits
+      };
+    });
 
     if (checkerHitsFilter === 'all') {
       if (onlyPrizes && activeRefNumbers.length > 0) {
         result = result.filter(({ bet, hits }) => {
           if (currentLottery === 'lotofacil') return hits >= 11;
           if (currentLottery === 'maismilionaria') {
+            if (checkerFilterScope === 'all_past') {
+              const bestPast = betPastComparisons.map.get(bet.id)?.bestMatch;
+              const tHits = bestPast?.trevosHits ?? 0;
+              return hits >= 4 || (hits === 3 && tHits >= 1) || (hits === 2 && tHits >= 1);
+            }
             const tHits = (activeRefTrevos && bet.trevos)
               ? bet.trevos.filter(t => activeRefTrevos.includes(t)).length
               : 0;
@@ -1096,7 +1355,10 @@ const App: React.FC = () => {
     }
 
     result.sort((a, b) => {
-      if (checkerHitsOrder === 'hits_desc') {
+      if (checkerHitsOrder === 'best_past') {
+        if (b.bestPastHits !== a.bestPastHits) return b.bestPastHits - a.bestPastHits;
+        if (b.selectedHits !== a.selectedHits) return b.selectedHits - a.selectedHits;
+      } else if (checkerHitsOrder === 'hits_desc') {
         if (b.hits !== a.hits) return b.hits - a.hits;
       } else if (checkerHitsOrder === 'hits_asc') {
         if (a.hits !== b.hits) return a.hits - b.hits;
@@ -1105,7 +1367,7 @@ const App: React.FC = () => {
     });
 
     return result.map(item => item.bet);
-  }, [history, currentLottery, activeRefNumbers, activeRefTrevos, checkerHitsFilter, checkerHitsOrder, onlyPrizes]);
+  }, [history, currentLottery, activeRefNumbers, activeRefTrevos, checkerHitsFilter, checkerHitsOrder, onlyPrizes, checkerFilterScope, betPastComparisons]);
 
   const handleExtractTernoStatsFromChecker = () => {
     const refSet = new Set(activeRefNumbers);
@@ -2397,6 +2659,12 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                     {[
                       { 
+                        id: 'combinatorial_cover', 
+                        label: '🛡️ Cobertura Anti-Colisão', 
+                        sub: 'Recomendado: 60/60 dez., 0 duplicatas',
+                        color: 'from-emerald-700 to-slate-800' 
+                      },
+                      { 
                         id: 'balanced', 
                         label: '🎯 Padrão Ouro', 
                         sub: 'Equilíbrio Bayesiano & Pareto',
@@ -2451,7 +2719,11 @@ const App: React.FC = () => {
 
                   {/* Parâmetros do Modelo Selecionado */}
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[10px] space-y-1 text-slate-600">
-                    {logicOptions.calculationStrategy === 'momentum' ? (
+                    {logicOptions.calculationStrategy === 'combinatorial_cover' ? (
+                      <p>
+                        <strong>Modelo Ativo (Auditado):</strong> Otimização Combinatória Anti-Colisão. Elimina jogos repetidos e viés de dezenas quentes, maximizando pares/trincas/quadras únicas e elevando P(&ge;1 Terno) e P(&ge;1 Quadra).
+                      </p>
+                    ) : logicOptions.calculationStrategy === 'momentum' ? (
                       <p>
                         <strong>Modelo Ativo:</strong> Decaimento Exponencial Temporal ($w = e^{'{-\\lambda \\Delta t}'}$). Prioriza dezenas com alto momentum nos últimos 50 concursos com multiplicador de 1.85x.
                       </p>
@@ -2512,6 +2784,52 @@ const App: React.FC = () => {
                     <Grid3X3 size={14} className="text-emerald-700" />
                     <span>Preencher Cartela com Análise Avançada</span>
                   </button>
+
+                  {/* Gerador de Carteira em Lote Anti-Colisão */}
+                  <div className="pt-2 border-t border-slate-100 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                      <span>Gerar Carteira Sem Duplicatas:</span>
+                      <div className="flex items-center gap-1">
+                        {[10, 30, 55, 78].map(sz => (
+                          <button
+                            key={sz}
+                            type="button"
+                            onClick={() => setPortfolioBatchSize(sz)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-black border cursor-pointer ${
+                              portfolioBatchSize === sz
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'bg-slate-50 text-slate-700 border-slate-200'
+                            }`}
+                          >
+                            {sz}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleGeneratePortfolioBatch}
+                      disabled={isRuleGenerating}
+                      className="w-full bg-slate-900 hover:bg-slate-800 text-white py-2.5 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Layers size={14} className="text-emerald-400" />
+                      <span>GERAR CARTEIRA DE {portfolioBatchSize} JOGOS ÚNICOS</span>
+                    </button>
+
+                    {lastBatchCoverage && (
+                      <div className="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-[10px] text-emerald-950 font-semibold space-y-0.5">
+                        <div className="flex justify-between">
+                          <span>Distintos: <strong>{lastBatchCoverage.distinctGames}/{lastBatchCoverage.totalGames}</strong></span>
+                          <span>Dezenas: <strong>{lastBatchCoverage.distinctNumbers}/60</strong></span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Pares Únicos: <strong>{lastBatchCoverage.uniquePairs} ({lastBatchCoverage.pairCoveragePct.toFixed(1)}%)</strong></span>
+                          <span>Gini: <strong>{lastBatchCoverage.giniCoefficient.toFixed(3)}</strong></span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2906,6 +3224,16 @@ const App: React.FC = () => {
               saveBet(type, numbers, reasoning, undefined, undefined, trevos);
               showToast("Aposta adicionada à sua carteira com sucesso!", 'success');
             }}
+            onSavePortfolioToHistory={(games, label) => {
+              saveBetsBatch(
+                games.map((numbers, idx) => ({
+                  type: 'smart_rules',
+                  numbers,
+                  reasoning: `${label} • Jogo #${idx + 1}/${games.length}`
+                }))
+              );
+              showToast(`${games.length} jogos salvos no seu histórico!`, 'success');
+            }}
             onGoToGenerator={() => setActiveTab('play')}
           />
         )}
@@ -3195,16 +3523,46 @@ const App: React.FC = () => {
                     currentLottery === 'lotofacil' ? 'bg-purple-400' : (currentLottery === 'maismilionaria' ? 'bg-amber-400' : 'bg-emerald-400')
                   }`}></span>
                   <span className="text-xs font-extrabold uppercase tracking-widest text-slate-200">
-                    Sorteio de Referência Caixa • Concurso #{activeOfficialDraw.contestNumber} ({activeOfficialDraw.date})
+                    {selectedCheckerContest === 'custom'
+                      ? 'Conferência • Resultado Personalizado (Manual)'
+                      : `Conferência Caixa • Concurso #${selectedCheckerDrawMeta?.contest ?? activeOfficialDraw.contestNumber} (${selectedCheckerDrawMeta?.date ?? activeOfficialDraw.date})`}
                   </span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <label htmlFor="checker-past-contest-select" className="text-[11px] font-bold text-slate-300">
+                      Concurso passado:
+                    </label>
+                    <select
+                      id="checker-past-contest-select"
+                      value={selectedCheckerContest}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'custom') return;
+                        const num = parseInt(val, 10);
+                        if (!isNaN(num)) handleSelectPastContestInChecker(num);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/15 border border-white/25 text-white text-[11px] font-bold outline-none focus:ring-2 focus:ring-amber-300 cursor-pointer"
+                    >
+                      {selectedCheckerContest === 'custom' && (
+                        <option value="custom" className="text-slate-900">
+                          Resultado Personalizado
+                        </option>
+                      )}
+                      {pastContestsForChecker.map(draw => (
+                        <option key={draw.contest} value={draw.contest} className="text-slate-900">
+                          #{draw.contest} ({draw.date}) — {draw.numbers.slice(0, 6).map(n => n.toString().padStart(2, '0')).join('-')}
+                          {draw.numbers.length > 6 ? '...' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <button
                     type="button"
                     onClick={handleRestoreOfficialDrawInChecker}
                     className="text-[11px] font-bold text-amber-300 hover:text-white underline cursor-pointer"
                   >
-                    Restaurar Concurso Oficial #{activeOfficialDraw.contestNumber}
+                    Último Oficial #{activeOfficialDraw.contestNumber}
                   </button>
                   <button 
                     type="button"
@@ -3413,6 +3771,42 @@ const App: React.FC = () => {
               </div>
             )}
 
+            {/* Resumo Automático em Jogos Passados */}
+            {betPastComparisons.totalBets > 0 && betPastComparisons.overallBest && (
+              <div className="p-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-emerald-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <History size={15} className="text-emerald-600" />
+                      Comparação Geral com {pastContestsForChecker.length} Jogos Passados
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      {betPastComparisons.betsWithMidOrHigher} de {betPastComparisons.totalBets} apostas com {currentLottery === 'lotofacil' ? '11+' : '3+'} dezenas
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600">
+                    Maior pontuação histórica entre suas apostas salvas:{' '}
+                    <strong className="text-slate-900">
+                      Concurso #{betPastComparisons.overallBest.match.contest} ({betPastComparisons.overallBest.match.date}) — {betPastComparisons.overallBest.match.hits} {betPastComparisons.overallBest.match.hits === 1 ? 'dezena' : 'dezenas'}
+                    </strong>
+                    {betPastComparisons.overallBest.match.matchedNumbers.length > 0 && (
+                      <span className="font-mono text-slate-700 ml-1">
+                        ({betPastComparisons.overallBest.match.matchedNumbers.map(n => n.toString().padStart(2, '0')).join(' - ')})
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectPastContestInChecker(betPastComparisons.overallBest!.match.contest)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black transition-colors cursor-pointer shrink-0"
+                >
+                  Conferir Concurso #{betPastComparisons.overallBest.match.contest}
+                </button>
+              </div>
+            )}
+
             {/* Gráfico de Visualização de Dados (Recharts) */}
             <FrequencyChart 
               history={history.filter(b => (b.lottery || 'megasena') === currentLottery)} 
@@ -3422,6 +3816,41 @@ const App: React.FC = () => {
 
             {/* Filtro por Quantidade de Acertos e Ordenação */}
             <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/70">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-600">
+                  Base do Filtro de Acertos:
+                </span>
+                <div className="inline-flex rounded-xl bg-slate-200/70 p-1 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCheckerFilterScope('selected_contest')}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      checkerFilterScope === 'selected_contest'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {selectedCheckerContest === 'custom'
+                      ? 'Resultado Manual'
+                      : `Concurso #${selectedCheckerContest}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCheckerFilterScope('all_past');
+                      setCheckerHitsOrder('best_past');
+                    }}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      checkerFilterScope === 'all_past'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Todos os Jogos Passados ({pastContestsForChecker.length})
+                  </button>
+                </div>
+              </div>
+
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[11px] font-black uppercase tracking-wider text-slate-600 flex items-center gap-1 mr-1">
@@ -3479,7 +3908,7 @@ const App: React.FC = () => {
                     <ArrowUpDown size={14} className="text-slate-500" />
                     <select
                       value={checkerHitsOrder}
-                      onChange={(e) => setCheckerHitsOrder(e.target.value as 'hits_desc' | 'hits_asc' | 'newest')}
+                      onChange={(e) => setCheckerHitsOrder(e.target.value as 'hits_desc' | 'hits_asc' | 'best_past' | 'newest')}
                       className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="hits_desc">
@@ -3487,6 +3916,7 @@ const App: React.FC = () => {
                           ? 'Ordem: Maior Acerto (15 → 11)'
                           : 'Ordem: Maior Acerto (6 → 3)'}
                       </option>
+                      <option value="best_past">Ordem: Melhor Acerto em Jogos Passados</option>
                       <option value="hits_asc">
                         {currentLottery === 'lotofacil'
                           ? 'Ordem: Menor Acerto (11 → 15)'
@@ -3552,7 +3982,10 @@ const App: React.FC = () => {
                     drawnTrevos={activeRefTrevos}
                     onDelete={handleDeleteBet} 
                     onAnalyze={handleAnalyzeBet} 
-                    isAnalyzing={analyzingId === bet.id} 
+                    isAnalyzing={analyzingId === bet.id}
+                    pastComparison={betPastComparisons.map.get(bet.id)}
+                    onSelectContest={handleSelectPastContestInChecker}
+                    selectedContestNumber={selectedCheckerContest}
                   />
                 ))}
               </div>

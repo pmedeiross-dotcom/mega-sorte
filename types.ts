@@ -14,11 +14,12 @@ export interface AnalysisResult {
 }
 
 export type CalculationStrategy = 
-  | 'balanced'       // Padrão Ouro Multi-Objetivo (Pareto + Poisson/Bernoulli + Moldura)
-  | 'momentum'       // Decaimento Exponencial & Momentum Recente (últimos 50-100 concursos)
-  | 'cycle_delay'    // Pressão Estatística (Z-Score de Atraso & Fechamento de Ciclo)
-  | 'cooccurrence'   // Coocorrência & Duques de Alta Afinidade (Lift Positivo)
-  | 'entropy_shannon'; // Máxima Entropia de Shannon & Dispersão Uniforme
+  | 'balanced'           // Padrão Ouro Multi-Objetivo (Pareto + Poisson/Bernoulli + Moldura)
+  | 'momentum'           // Decaimento Exponencial & Momentum Recente (últimos 50-100 concursos)
+  | 'cycle_delay'        // Pressão Estatística (Z-Score de Atraso & Fechamento de Ciclo)
+  | 'cooccurrence'       // Coocorrência & Duques de Alta Afinidade (Lift Positivo)
+  | 'entropy_shannon'    // Máxima Entropia de Shannon & Dispersão Uniforme
+  | 'combinatorial_cover'; // Otimização Combinatória Anti-Colisão de Carteira (Recomendado)
 
 export interface AdvancedBetMetrics {
   duquePair?: [number, number];

@@ -2,8 +2,24 @@
 import React, { useState } from 'react';
 import { Bet } from '../types';
 import NumberBall from './NumberBall';
-import { Trash2, Share2, Calendar, Activity, Calculator, FileDown, Copy, Check, Award, Cloud } from 'lucide-react';
+import { Trash2, Share2, Calendar, Activity, Calculator, FileDown, Copy, Check, Award, Cloud, History, ChevronDown, ChevronUp, Target } from 'lucide-react';
 import { jsPDF } from 'jspdf';
+
+export interface PastContestMatch {
+  contest: number;
+  date: string;
+  hits: number;
+  matchedNumbers: number[];
+  trevosHits?: number;
+  matchedTrevos?: number[];
+}
+
+export interface PastComparisonSummary {
+  totalContestsChecked: number;
+  bestMatch: PastContestMatch | null;
+  notableMatches: PastContestMatch[];
+  countsByTier: Record<number, number>;
+}
 
 interface BetCardProps {
   bet: Bet;
@@ -12,10 +28,24 @@ interface BetCardProps {
   onDelete: (id: string) => void;
   onAnalyze: (id: string) => Promise<void>;
   isAnalyzing: boolean;
+  pastComparison?: PastComparisonSummary;
+  onSelectContest?: (contestNumber: number) => void;
+  selectedContestNumber?: number | 'custom';
 }
 
-const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDelete, onAnalyze, isAnalyzing }) => {
+const BetCard: React.FC<BetCardProps> = ({
+  bet,
+  drawnNumbers,
+  drawnTrevos,
+  onDelete,
+  onAnalyze,
+  isAnalyzing,
+  pastComparison,
+  onSelectContest,
+  selectedContestNumber
+}) => {
   const [copied, setCopied] = useState(false);
+  const [showAllPastMatches, setShowAllPastMatches] = useState(false);
   const isMaisMilionaria = bet.lottery === 'maismilionaria';
   const isLotofacil = bet.lottery === 'lotofacil';
 
@@ -346,12 +376,15 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
                 ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
                 : bet.advancedMetrics.strategyUsed === 'entropy_shannon'
                 ? 'bg-purple-50 text-purple-900 border-purple-300'
+                : bet.advancedMetrics.strategyUsed === 'combinatorial_cover'
+                ? 'bg-teal-50 text-teal-900 border-teal-300'
                 : 'bg-emerald-50 text-emerald-900 border-emerald-300'
             }`}>
               {bet.advancedMetrics.strategyUsed === 'momentum' && '🔥 Momentum'}
               {bet.advancedMetrics.strategyUsed === 'cycle_delay' && '⏳ Pressão/Ciclo'}
               {bet.advancedMetrics.strategyUsed === 'cooccurrence' && '🔗 Alta Afinidade'}
               {bet.advancedMetrics.strategyUsed === 'entropy_shannon' && '🎲 Shannon'}
+              {bet.advancedMetrics.strategyUsed === 'combinatorial_cover' && '🛡️ Cobertura Anti-Colisão'}
               {bet.advancedMetrics.strategyUsed === 'balanced' && '🎯 Padrão Ouro'}
             </span>
           )}
@@ -405,6 +438,139 @@ const BetCard: React.FC<BetCardProps> = ({ bet, drawnNumbers, drawnTrevos, onDel
           <p className="text-[11px] text-gray-600 bg-gray-50/70 p-2.5 rounded-xl border border-gray-100 leading-relaxed mb-3">
             {bet.reasoning}
           </p>
+        )}
+
+        {/* Comparação Automática com Concursos Passados */}
+        {pastComparison && pastComparison.bestMatch && (
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1">
+                <History size={12} className={isLotofacil ? 'text-purple-600' : isMaisMilionaria ? 'text-amber-600' : 'text-emerald-600'} />
+                Comparação em Jogos Passados ({pastComparison.totalContestsChecked} concursos)
+              </span>
+              {pastComparison.notableMatches.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllPastMatches(prev => !prev)}
+                  className="text-[10px] font-bold text-slate-600 hover:text-slate-900 flex items-center gap-0.5 cursor-pointer"
+                >
+                  <span>{showAllPastMatches ? 'Ocultar lista' : `Ver ${pastComparison.notableMatches.length} concursos`}</span>
+                  {showAllPastMatches ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+              )}
+            </div>
+
+            {(() => {
+              const best = pastComparison.bestMatch;
+              const isHighTier = isLotofacil ? best.hits >= 11 : best.hits >= 4;
+              const isMidTier = isLotofacil ? best.hits >= 10 : best.hits === 3;
+              const tierLabel = isLotofacil
+                ? (best.hits >= 11 ? `${best.hits} Acertos` : `${best.hits} dezenas`)
+                : best.hits >= 6
+                ? 'Sena (6 dezenas)'
+                : best.hits === 5
+                ? 'Quina (5 dezenas)'
+                : best.hits === 4
+                ? 'Quadra (4 dezenas)'
+                : best.hits === 3
+                ? 'Terno (3 dezenas)'
+                : `${best.hits} ${best.hits === 1 ? 'dezena' : 'dezenas'}`;
+
+              return (
+                <div
+                  className={`rounded-lg px-2.5 py-2 border flex flex-col gap-1.5 ${
+                    isHighTier
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                      : isMidTier
+                      ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+                      : 'bg-white border-slate-200 text-slate-800'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Target size={13} className={isHighTier ? 'text-emerald-600' : isMidTier ? 'text-amber-600' : 'text-slate-500'} />
+                      <span className="text-[11px] font-black">
+                        Concurso #{best.contest} ({best.date})
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${
+                          isHighTier
+                            ? 'bg-emerald-600 text-white'
+                            : isMidTier
+                            ? 'bg-amber-500 text-amber-950'
+                            : 'bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {tierLabel}
+                        {isMaisMilionaria && best.trevosHits !== undefined ? ` + ${best.trevosHits} trevo(s)` : ''}
+                      </span>
+                    </div>
+
+                    {onSelectContest && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectContest(best.contest)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
+                          selectedContestNumber === best.contest
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        }`}
+                      >
+                        {selectedContestNumber === best.contest ? 'Em conferência' : `Conferir #${best.contest}`}
+                      </button>
+                    )}
+                  </div>
+
+                  {best.matchedNumbers.length > 0 && (
+                    <div className="text-[10px] font-medium flex flex-wrap items-center gap-1">
+                      <span className="opacity-75">Dezenas acertadas:</span>
+                      <span className="font-mono font-bold">
+                        {best.matchedNumbers.map(n => n.toString().padStart(2, '0')).join(' - ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {showAllPastMatches && pastComparison.notableMatches.length > 0 && (
+              <div className="space-y-1 max-h-44 overflow-y-auto pr-1 pt-0.5">
+                {pastComparison.notableMatches.map((m) => (
+                  <div
+                    key={m.contest}
+                    className="flex flex-wrap items-center justify-between gap-2 text-[10px] bg-white border border-slate-200 rounded-lg px-2.5 py-1.5"
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-black text-slate-800">Concurso #{m.contest}</span>
+                      <span className="text-slate-400">({m.date})</span>
+                      <span className="font-bold text-emerald-700">
+                        • {m.hits} {m.hits === 1 ? 'dezena' : 'dezenas'}
+                        {isMaisMilionaria && m.trevosHits !== undefined ? ` (+${m.trevosHits} tr.)` : ''}
+                      </span>
+                      {m.matchedNumbers.length > 0 && (
+                        <span className="font-mono text-slate-600">
+                          [{m.matchedNumbers.map(n => n.toString().padStart(2, '0')).join(', ')}]
+                        </span>
+                      )}
+                    </div>
+                    {onSelectContest && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectContest(m.contest)}
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded border cursor-pointer ${
+                          selectedContestNumber === m.contest
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {selectedContestNumber === m.contest ? 'Ativo' : 'Conferir'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

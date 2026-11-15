@@ -2,7 +2,7 @@ import { CalculationStrategy, GeneratorLogic, LotteryType, OfficialDrawResult, T
 import { generateGameWithRules } from './lotteryRules';
 import { generateMaisMilionariaGameWithRules } from './maisMilionariaRules';
 import { generateLotofacilWithRules } from './lotofacilRules';
-import { buildDrawsListWithLatest, FRAME_NUMBERS, PRIME_NUMBERS } from './megaSenaAdvancedAnalytics';
+import { buildDrawsListWithLatest, computeAllMegaSenaAnalytics, FRAME_NUMBERS, MegaAnalyticsSnapshot, PRIME_NUMBERS } from './megaSenaAdvancedAnalytics';
 import { buildMaisMilionariaDrawsListWithLatest, MAIS_MILIONARIA_FRAME, MAIS_MILIONARIA_PRIME_NUMBERS } from './maisMilionariaAdvancedAnalytics';
 import { buildLotofacilDrawsListWithLatest } from './lotofacilContestsData';
 import { LOTOFACIL_FRAME, LOTOFACIL_PRIMES } from './lotofacilOfficialStats';
@@ -77,7 +77,8 @@ export const STRATEGY_LABELS: Record<CalculationStrategy, string> = {
   momentum: 'Momentum Recente (Decaimento)',
   cycle_delay: 'Pressão & Fechamento de Ciclo',
   cooccurrence: 'Coocorrência & Duques (Lift)',
-  entropy_shannon: 'Máxima Entropia de Shannon'
+  entropy_shannon: 'Máxima Entropia de Shannon',
+  combinatorial_cover: 'Cobertura Combinatória Anti-Colisão'
 };
 
 /**
@@ -170,7 +171,8 @@ function generateCandidateForDraw(
   lottery: LotteryType,
   logic: GeneratorLogic,
   betCount: number,
-  referenceNumbers: number[]
+  referenceNumbers: number[],
+  megaAnalyticsOverride?: MegaAnalyticsSnapshot
 ): { numbers: number[]; trevos?: number[]; advancedScore?: number } {
   const safeCount = lottery === 'lotofacil'
     ? Math.min(20, Math.max(15, betCount || 15))
@@ -209,7 +211,7 @@ function generateCandidateForDraw(
   let fallback: { numbers: number[]; advancedScore: number } | null = null;
   const maxTries = usePlausibility ? 4 : 1;
   for (let i = 0; i < maxTries; i++) {
-    const res = generateGameWithRules(safeCount, logic, referenceNumbers);
+    const res = generateGameWithRules(safeCount, logic, referenceNumbers, megaAnalyticsOverride);
     const current = {
       numbers: res.numbers,
       advancedScore: res.validation.advancedScore
@@ -262,7 +264,16 @@ export function runBacktestRange(params: {
     const prevDraw = fullIdx >= 0 && fullIdx + 1 < allDraws.length ? allDraws[fullIdx + 1] : undefined;
     const refNumbers = prevDraw ? prevDraw.numbers : [];
 
-    const generated = generateCandidateForDraw(lottery, logic, betCount, refNumbers);
+    // Zero lookahead: na Mega-Sena, recalcula o ciclo/atraso estritamente com concursos anteriores (< t)
+    const priorDraws = fullIdx >= 0 && fullIdx + 1 < allDraws.length ? allDraws.slice(fullIdx + 1) : [];
+    const megaAnalyticsOverride =
+      lottery === 'megasena' && priorDraws.length > 0
+        ? computeAllMegaSenaAnalytics(
+            priorDraws.map(d => ({ contest: d.contest, date: d.date, numbers: d.numbers }))
+          )
+        : undefined;
+
+    const generated = generateCandidateForDraw(lottery, logic, betCount, refNumbers, megaAnalyticsOverride);
     const drawnSet = new Set(draw.numbers);
     const matchedNumbers = generated.numbers.filter(n => drawnSet.has(n));
     const hits = matchedNumbers.length;
@@ -354,6 +365,18 @@ export function calibrateStrategyAgainstHistory(params: {
       label: 'Configuração Atual do Gerador',
       strategy: baseLogic.calculationStrategy || 'balanced',
       overrides: {}
+    },
+    {
+      label: 'Cobertura Combinatória Anti-Colisão + Plausibilidade',
+      strategy: 'combinatorial_cover',
+      overrides: {
+        strictPlausibilityFilter: true,
+        useAdvancedDuques: false,
+        paretoTopSelection: false,
+        preferHistoricalHotNumbers: false,
+        includeCycleDezenas: false,
+        repeat1to2: false
+      }
     },
     {
       label: 'Padrão Ouro + Plausibilidade Estrita',

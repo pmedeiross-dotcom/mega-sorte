@@ -993,7 +993,13 @@ export const autoOptimizeGameNumbers = (currentNumbers: number[]): { optimizedNu
   return { optimizedNumbers: candidates, changesMade: changes };
 };
 
-export const evaluateAdvancedGameMetrics = (numbers: number[]): EvaluatedAdvancedMetrics => {
+export type MegaAnalyticsSnapshot = ReturnType<typeof computeAllMegaSenaAnalytics>;
+
+export const evaluateAdvancedGameMetrics = (
+  numbers: number[],
+  analyticsOverride?: MegaAnalyticsSnapshot
+): EvaluatedAdvancedMetrics => {
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const sorted = [...numbers].sort((a, b) => a - b);
   const primesCount = sorted.filter(n => PRIME_NUMBERS.includes(n)).length;
   const fibonacciCount = sorted.filter(n => FIBONACCI_NUMBERS.includes(n)).length;
@@ -1001,10 +1007,10 @@ export const evaluateAdvancedGameMetrics = (numbers: number[]): EvaluatedAdvance
   const frameCount = sorted.filter(n => FRAME_NUMBERS.includes(n)).length;
   const centerCount = sorted.length - frameCount;
 
-  const paretoSet = new Set(CACHED_ADVANCED_ANALYTICS.paretoTopNumbers.map(p => p.number));
+  const paretoSet = new Set(analytics.paretoTopNumbers.map(p => p.number));
   const paretoCount = sorted.filter(n => paretoSet.has(n)).length;
 
-  const cycleMissingSet = new Set(CACHED_ADVANCED_ANALYTICS.cycleAnalysis.missingNumbers);
+  const cycleMissingSet = new Set(analytics.cycleAnalysis.missingNumbers);
   const cycleMissingCount = sorted.filter(n => cycleMissingSet.has(n)).length;
 
   const rowCounts = Array(6).fill(0);
@@ -1018,7 +1024,7 @@ export const evaluateAdvancedGameMetrics = (numbers: number[]): EvaluatedAdvance
 
   let matchedDuque: [number, number] | undefined = undefined;
   let matchedDuqueName: string | undefined = undefined;
-  for (const duque of CACHED_ADVANCED_ANALYTICS.topDuques) {
+  for (const duque of analytics.topDuques) {
     if (sorted.includes(duque.pair[0]) && sorted.includes(duque.pair[1])) {
       matchedDuque = duque.pair;
       matchedDuqueName = `${duque.name} (${duque.count}x na história)`;
@@ -1027,7 +1033,7 @@ export const evaluateAdvancedGameMetrics = (numbers: number[]): EvaluatedAdvance
   }
 
   const statusMap = new Map<number, 'quente' | 'morna' | 'fria'>();
-  CACHED_ADVANCED_ANALYTICS.numbersAnalysis.forEach(n => statusMap.set(n.number, n.status));
+  analytics.numbersAnalysis.forEach(n => statusMap.set(n.number, n.status));
   const hotCount = sorted.filter(n => statusMap.get(n) === 'quente').length;
   const warmCount = sorted.filter(n => statusMap.get(n) === 'morna').length;
   const coldCount = sorted.filter(n => statusMap.get(n) === 'fria').length;

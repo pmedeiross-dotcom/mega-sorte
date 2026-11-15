@@ -29,6 +29,7 @@ import {
   getHistoricalDrawsForBacktest,
   runBacktestRange
 } from '../utils/backtestingEngine';
+import { ProspectiveAuditPanel } from './ProspectiveAuditPanel';
 
 interface GameComparatorViewProps {
   savedBets: Bet[];
@@ -43,6 +44,7 @@ interface GameComparatorViewProps {
     reasoning?: string,
     trevos?: number[]
   ) => void;
+  onSavePortfolioToHistory?: (games: number[][], label: string) => void;
   onGoToGenerator?: () => void;
 }
 
@@ -74,6 +76,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   latestDraw,
   betCount,
   onAddBet,
+  onSavePortfolioToHistory,
   onGoToGenerator
 }) => {
   const lottery: LotteryType = lotteryProp ?? 'megasena';
@@ -83,7 +86,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   const ticketSize = betCount || (isLotofacil ? 15 : 6);
 
   // Modo ativo dentro do Comparador
-  const [subMode, setSubMode] = useState<'direct' | 'backtesting'>('direct');
+  const [subMode, setSubMode] = useState<'direct' | 'backtesting' | 'prospective'>('direct');
 
   // ==================== COMPARAÇÃO DIRETA ====================
   const [selectedBetIds, setSelectedBetIds] = useState<string[]>(() => {
@@ -517,6 +520,26 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
             Concursos Reais
           </span>
         </button>
+
+        {lottery === 'megasena' && (
+          <button
+            type="button"
+            onClick={() => setSubMode('prospective')}
+            className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              subMode === 'prospective'
+                ? 'bg-emerald-700 text-white shadow-md'
+                : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <ShieldCheck size={17} />
+            <span>Auditoria Prospectiva (50 Concursos)</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+              subMode === 'prospective' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'
+            }`}>
+              SHA-256
+            </span>
+          </button>
+        )}
       </div>
 
       {/* ==================== CONTEÚDO: MODO BACKTESTING ==================== */}
@@ -1253,6 +1276,15 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {/* ==================== CONTEÚDO: AUDITORIA PROSPECTIVA ==================== */}
+      {subMode === 'prospective' && (
+        <ProspectiveAuditPanel
+          logicOptions={logicOptions || DEFAULT_LOGIC}
+          latestOfficialDraw={latestDraw || { contestNumber: 3069, date: '11/10/2026', numbers: [5, 19, 22, 44, 47, 57] }}
+          onSaveGamesToHistory={onSavePortfolioToHistory}
+        />
       )}
 
       {/* ==================== CONTEÚDO: COMPARAÇÃO DIRETA ==================== */}

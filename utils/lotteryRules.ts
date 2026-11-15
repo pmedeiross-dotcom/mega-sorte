@@ -12,8 +12,14 @@ import {
   CENTER_NUMBERS,
   CACHED_ADVANCED_ANALYTICS,
   evaluateAdvancedGameMetrics,
-  EvaluatedAdvancedMetrics
+  EvaluatedAdvancedMetrics,
+  MegaAnalyticsSnapshot
 } from './megaSenaAdvancedAnalytics';
+import {
+  generateCombinatorialPortfolio,
+  analyzePortfolioCoverage,
+  PortfolioCoverageMetrics
+} from './portfolioOptimizer';
 
 export interface GameValidationDetails {
   sum: number;
@@ -89,7 +95,8 @@ export { generateSmartDiagnosticSuggestions, autoOptimizeGameNumbers } from './m
 export const validateGameAgainstRules = (
   numbers: number[],
   logic: GeneratorLogic,
-  referenceNumbers?: number[]
+  referenceNumbers?: number[],
+  analyticsOverride?: MegaAnalyticsSnapshot
 ): GameValidationDetails => {
   const sorted = [...numbers].sort((a, b) => a - b);
   const sum = sorted.reduce((acc, curr) => acc + curr, 0);
@@ -171,7 +178,7 @@ export const validateGameAgainstRules = (
   const historicalHotValid = !logic.preferHistoricalHotNumbers || (historical.top20Count >= 2 && historical.top20Count <= 4);
 
   // Métricas e regras da Análise Avançada
-  const adv = evaluateAdvancedGameMetrics(sorted);
+  const adv = evaluateAdvancedGameMetrics(sorted, analyticsOverride);
   const duquesValid = !logic.useAdvancedDuques || adv.duquesValid;
   const frameCenterValid = !logic.frameAndCenterBalance || adv.frameCenterValid;
   const primesFiboValid = !logic.balancePrimesAndFibonacci || (adv.primesValid && adv.fibonacciValid);
@@ -291,14 +298,16 @@ const getAdvancedWeightedCandidate = (
   currentEvens: number,
   currentFrame: number,
   rowCounts: number[],
-  colCounts: number[]
+  colCounts: number[],
+  analyticsOverride?: MegaAnalyticsSnapshot
 ): number => {
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const pool: number[] = [];
   const strategy = logic.calculationStrategy || 'balanced';
 
   // Mapa de status e atrasos para ponderação estocástica
   const analysisMap = new Map<number, { status: string; delay: number; recentCount: number }>();
-  CACHED_ADVANCED_ANALYTICS.numbersAnalysis.forEach(n => {
+  analytics.numbersAnalysis.forEach(n => {
     analysisMap.set(n.number, {
       status: n.status,
       delay: n.currentDelay,
@@ -306,15 +315,15 @@ const getAdvancedWeightedCandidate = (
     });
   });
 
-  const cycleMissing = new Set(CACHED_ADVANCED_ANALYTICS.cycleAnalysis.missingNumbers);
+  const cycleMissing = new Set(analytics.cycleAnalysis.missingNumbers);
 
   for (let num = 1; num <= 60; num++) {
     if (exclude.has(num)) continue;
 
     const data = analysisMap.get(num) || { status: 'morna', delay: 10, recentCount: 2 };
 
-    // Frequência base oficial (todos os 3.071 concursos)
-    let weight = OFFICIAL_FREQUENCY_DATA[num] || 300;
+    // Modo Cobertura Combinatória: peso estrutural uniforme (sem viés de popularidade histórica)
+    let weight = strategy === 'combinatorial_cover' ? 300 : (OFFICIAL_FREQUENCY_DATA[num] || 300);
 
     // Modulação baseada na Estratégia de Cálculo Matemática:
     if (strategy === 'momentum') {
@@ -350,7 +359,7 @@ const getAdvancedWeightedCandidate = (
     } else if (strategy === 'cooccurrence') {
       // Afinidade de Duques: amplifica dezenas que têm duques históricos com as já escolhidas
       let hasDuqueAffinity = false;
-      for (const d of CACHED_ADVANCED_ANALYTICS.topDuques) {
+      for (const d of analytics.topDuques) {
         if (d.pair.includes(num)) {
           for (const picked of exclude) {
             if (d.pair.includes(picked)) {
@@ -451,7 +460,8 @@ export const buildAdvancedBetMetrics = (validation: GameValidationDetails, strat
 export const generateGameWithRules = (
   quantity: number = 6,
   logic: GeneratorLogic,
-  referenceNumbers: number[] = [5, 19, 22, 44, 47, 57]
+  referenceNumbers: number[] = [5, 19, 22, 44, 47, 57],
+  analyticsOverride?: MegaAnalyticsSnapshot
 ): { 
   numbers: number[]; 
   reasoning: string; 
@@ -459,20 +469,33 @@ export const generateGameWithRules = (
   validation: GameValidationDetails;
   advancedMetrics: AdvancedBetMetrics;
 } => {
-  const maxAttempts = 2500;
+  const isCombinatorialMode = logic.calculationStrategy === 'combinatorial_cover';
+  const effectiveLogic: GeneratorLogic = isCombinatorialMode
+    ? {
+        ...logic,
+        useAdvancedDuques: false,
+        paretoTopSelection: false,
+        preferHistoricalHotNumbers: false,
+        includeCycleDezenas: false,
+        repeat1to2: false
+      }
+    : logic;
+
+  const maxAttempts = isCombinatorialMode ? 450 : 2500;
   let bestAttempt: number[] = [];
   let bestScore = -1;
   let bestValidation: GameValidationDetails | null = null;
 
-  const topDuques = CACHED_ADVANCED_ANALYTICS.topDuques;
-  const paretoNumbers = CACHED_ADVANCED_ANALYTICS.paretoTopNumbers.map(p => p.number);
-  const cycleMissing = CACHED_ADVANCED_ANALYTICS.cycleAnalysis.missingNumbers;
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
+  const topDuques = analytics.topDuques;
+  const paretoNumbers = analytics.paretoTopNumbers.map(p => p.number);
+  const cycleMissing = analytics.cycleAnalysis.missingNumbers;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const candidates: Set<number> = new Set();
 
     // 1. Pilar Avançado: Semente com Duque Histórico mais sorteado
-    if (logic.useAdvancedDuques && topDuques.length > 0 && Math.random() > 0.15) {
+    if (effectiveLogic.useAdvancedDuques && topDuques.length > 0 && Math.random() > 0.15) {
       // Escolhe um dos 6 melhores duques da história da Mega-Sena
       const duqueIndex = Math.floor(Math.random() * Math.min(6, topDuques.length));
       const duque = topDuques[duqueIndex];
@@ -481,7 +504,7 @@ export const generateGameWithRules = (
     }
 
     // 2. Repetição de 1-2 dezenas do sorteio de referência
-    if (logic.repeat1to2 && referenceNumbers && referenceNumbers.length >= 2) {
+    if (effectiveLogic.repeat1to2 && referenceNumbers && referenceNumbers.length >= 2) {
       const repeatCount = Math.random() > 0.4 ? 2 : 1;
       const shuffledRef = [...referenceNumbers].sort(() => 0.5 - Math.random());
       for (let i = 0; i < Math.min(repeatCount, shuffledRef.length); i++) {
@@ -492,7 +515,7 @@ export const generateGameWithRules = (
     }
 
     // 3. Pilar Avançado: Dezena faltante do Ciclo Atual da Mega-Sena
-    if (logic.includeCycleDezenas && cycleMissing.length > 0 && Math.random() > 0.25) {
+    if (effectiveLogic.includeCycleDezenas && cycleMissing.length > 0 && Math.random() > 0.25) {
       const missingCandidate = cycleMissing[Math.floor(Math.random() * cycleMissing.length)];
       if (candidates.size < quantity) {
         candidates.add(missingCandidate);
@@ -500,7 +523,7 @@ export const generateGameWithRules = (
     }
 
     // 4. Pilar Avançado: Dezenas do Top 20% Pareto da Mega-Sena
-    if (logic.paretoTopSelection && paretoNumbers.length > 0 && Math.random() > 0.2) {
+    if (effectiveLogic.paretoTopSelection && paretoNumbers.length > 0 && Math.random() > 0.2) {
       const paretoCandidate = paretoNumbers[Math.floor(Math.random() * paretoNumbers.length)];
       if (candidates.size < quantity) {
         candidates.add(paretoCandidate);
@@ -508,8 +531,8 @@ export const generateGameWithRules = (
     }
 
     // 4b. Semente empírica das simulações com Terno (3+ acertos)
-    if (logic.useTernoStatsBoost && logic.ternoBoostProfile && logic.ternoBoostProfile.lottery === 'megasena' && Math.random() > 0.2) {
-      const tp = logic.ternoBoostProfile;
+    if (effectiveLogic.useTernoStatsBoost && effectiveLogic.ternoBoostProfile && effectiveLogic.ternoBoostProfile.lottery === 'megasena' && Math.random() > 0.2) {
+      const tp = effectiveLogic.ternoBoostProfile;
       if (tp.topPairs.length > 0 && Math.random() > 0.45 && candidates.size + 2 <= quantity) {
         const pair = tp.topPairs[Math.floor(Math.random() * Math.min(4, tp.topPairs.length))];
         candidates.add(pair[0]);
@@ -535,11 +558,12 @@ export const generateGameWithRules = (
 
       const candidate = getAdvancedWeightedCandidate(
         candidates, 
-        logic, 
+        effectiveLogic, 
         currentEvens, 
         currentFrame, 
         rowCounts, 
-        colCounts
+        colCounts,
+        analyticsOverride
       );
       candidates.add(candidate);
     }
@@ -547,28 +571,31 @@ export const generateGameWithRules = (
     const testNumbers = Array.from(candidates).sort((a, b) => a - b);
     if (testNumbers.length < quantity) continue;
 
-    const validation = validateGameAgainstRules(testNumbers, logic, referenceNumbers);
+    const validation = validateGameAgainstRules(testNumbers, effectiveLogic, referenceNumbers, analyticsOverride);
 
     // Se passou em todas as regras ativas
     if (validation.allActiveRulesPassed) {
       const highlights: string[] = [];
       if (validation.matchedDuqueName) highlights.push(`Duque ${validation.matchedDuqueName}`);
-      if (logic.sum160to240) highlights.push(`soma ${validation.sum} (Zona de Ouro)`);
-      if (logic.balanceEvenOdd) highlights.push(`${validation.evenCount}P/${validation.oddCount}I`);
-      if (logic.frameAndCenterBalance) highlights.push(`${validation.frameCount} Moldura / ${validation.centerCount} Centro`);
+      if (effectiveLogic.sum160to240) highlights.push(`soma ${validation.sum} (Zona de Ouro)`);
+      if (effectiveLogic.balanceEvenOdd) highlights.push(`${validation.evenCount}P/${validation.oddCount}I`);
+      if (effectiveLogic.frameAndCenterBalance) highlights.push(`${validation.frameCount} Moldura / ${validation.centerCount} Centro`);
       if (validation.primesCount > 0) highlights.push(`${validation.primesCount} Primos`);
       if (validation.fibonacciCount > 0) highlights.push(`${validation.fibonacciCount} Fibonacci`);
       if (validation.multiplesOfThreeCount > 0) highlights.push(`${validation.multiplesOfThreeCount} Múltiplos de 3`);
-      if (validation.paretoCount > 0) highlights.push(`${validation.paretoCount} no Top Pareto`);
-      if (validation.cycleMissingCount > 0) highlights.push(`${validation.cycleMissingCount} do Ciclo Atual`);
-      if (logic.preferHistoricalHotNumbers) highlights.push(`${validation.historicalHotCount} no Top 20 Geral`);
-      if (logic.spreadDistribution) highlights.push(`4 quadrantes`);
-      if (logic.repeat1to2 && validation.repeatedCount > 0) highlights.push(`${validation.repeatedCount} repetida(s)`);
-      if (logic.useTernoStatsBoost && (validation.ternoAlignmentCount || 0) > 0) {
+      if (validation.paretoCount > 0 && effectiveLogic.paretoTopSelection) highlights.push(`${validation.paretoCount} no Top Pareto`);
+      if (validation.cycleMissingCount > 0 && effectiveLogic.includeCycleDezenas) highlights.push(`${validation.cycleMissingCount} do Ciclo Atual`);
+      if (effectiveLogic.preferHistoricalHotNumbers) highlights.push(`${validation.historicalHotCount} no Top 20 Geral`);
+      if (effectiveLogic.spreadDistribution) highlights.push(`4 quadrantes`);
+      if (effectiveLogic.repeat1to2 && validation.repeatedCount > 0) highlights.push(`${validation.repeatedCount} repetida(s)`);
+      if (effectiveLogic.useTernoStatsBoost && (validation.ternoAlignmentCount || 0) > 0) {
         highlights.push(`${validation.ternoAlignmentCount} dezenas do Reforço Terno+`);
       }
 
-      const reason = `Gerado via Análise Avançada (3.071 concursos): ${highlights.join(' • ')}. Média de ${validation.historicalAverageDraws} sorteios históricos por dezena (Conformidade Analítica: ${validation.advancedScore}%).`;
+      const modePrefix = isCombinatorialMode
+        ? 'Gerado via Cobertura Combinatória Estrutural (sem viés de dezena)'
+        : 'Gerado via Análise Avançada (3.071 concursos)';
+      const reason = `${modePrefix}: ${highlights.join(' • ')} (Conformidade: ${validation.advancedScore}%).`;
 
       return {
         numbers: testNumbers,
@@ -579,9 +606,9 @@ export const generateGameWithRules = (
       };
     }
 
-    const ternoBonus = (logic.useTernoStatsBoost && logic.ternoBoostProfile?.lottery === 'megasena')
+    const ternoBonus = (effectiveLogic.useTernoStatsBoost && effectiveLogic.ternoBoostProfile?.lottery === 'megasena')
       ? ((validation.ternoAlignmentCount || 0) * 15 +
-         (validation.sum >= logic.ternoBoostProfile.targetSumMin && validation.sum <= logic.ternoBoostProfile.targetSumMax ? 15 : 0))
+         (validation.sum >= effectiveLogic.ternoBoostProfile.targetSumMin && validation.sum <= effectiveLogic.ternoBoostProfile.targetSumMax ? 15 : 0))
       : 0;
     const compositeScore = validation.passedRulesCount * 100 + validation.advancedScore + ternoBonus;
     if (compositeScore > bestScore) {
@@ -593,9 +620,9 @@ export const generateGameWithRules = (
 
   // Melhor combinação encontrada como fallback
   const finalNumbers = bestAttempt.length === quantity ? bestAttempt : generateBasicBalancedNumbers(quantity);
-  const fallbackValidation = bestValidation || validateGameAgainstRules(finalNumbers, logic, referenceNumbers);
+  const fallbackValidation = bestValidation || validateGameAgainstRules(finalNumbers, effectiveLogic, referenceNumbers, analyticsOverride);
 
-  const fallbackReason = `Jogo otimizado com a melhor pontuação analítica (${fallbackValidation.passedRulesCount}/${fallbackValidation.activeRulesCount} regras cumpridas, Conformidade Analítica: ${fallbackValidation.advancedScore}%, média de ${fallbackValidation.historicalAverageDraws} sorteios históricos).`;
+  const fallbackReason = `Jogo otimizado com a melhor pontuação analítica (${fallbackValidation.passedRulesCount}/${fallbackValidation.activeRulesCount} regras cumpridas, Conformidade Analítica: ${fallbackValidation.advancedScore}%).`;
 
   return {
     numbers: finalNumbers,
@@ -612,4 +639,110 @@ const generateBasicBalancedNumbers = (quantity: number): number[] => {
     nums.add(Math.floor(Math.random() * 60) + 1);
   }
   return Array.from(nums).sort((a, b) => a - b);
+};
+
+/**
+ * Gera uma carteira completa de M jogos com desduplicação obrigatória entre bilhetes.
+ * Quando a estratégia é 'combinatorial_cover', aplica o otimizador anti-colisão em nível de carteira.
+ */
+export const generatePortfolioWithRules = (
+  portfolioSize: number,
+  quantity: number = 6,
+  logic: GeneratorLogic,
+  referenceNumbers: number[] = [5, 19, 22, 44, 47, 57],
+  analyticsOverride?: MegaAnalyticsSnapshot
+): {
+  games: Array<{
+    numbers: number[];
+    reasoning: string;
+    passedAllRules: boolean;
+    validation: GameValidationDetails;
+    advancedMetrics: AdvancedBetMetrics;
+  }>;
+  coverage: PortfolioCoverageMetrics;
+} => {
+  const safePortfolioSize = Math.max(1, Math.min(300, portfolioSize));
+
+  if (logic.calculationStrategy === 'combinatorial_cover') {
+    const rawGames = generateCombinatorialPortfolio(safePortfolioSize, {
+      betSize: quantity,
+      maxNum: 60,
+      useStructuralPlausibility: logic.strictPlausibilityFilter !== false
+    });
+    const coverage = analyzePortfolioCoverage(rawGames, 60);
+    const cleanLogic: GeneratorLogic = {
+      ...logic,
+      useAdvancedDuques: false,
+      paretoTopSelection: false,
+      preferHistoricalHotNumbers: false,
+      includeCycleDezenas: false,
+      repeat1to2: false
+    };
+    const games = rawGames.map((numbers, idx) => {
+      const validation = validateGameAgainstRules(numbers, cleanLogic, referenceNumbers, analyticsOverride);
+      return {
+        numbers,
+        reasoning: `Carteira Cobertura Anti-Colisão (#${idx + 1}/${safePortfolioSize}): ${coverage.distinctNumbers}/60 dezenas • ${coverage.uniquePairs}/${coverage.totalPossiblePairs} pares únicos (${coverage.pairCoveragePct.toFixed(1)}%) • 0 jogos repetidos.`,
+        passedAllRules: true,
+        validation,
+        advancedMetrics: buildAdvancedBetMetrics(validation, 'combinatorial_cover')
+      };
+    });
+    return { games, coverage };
+  }
+
+  // Para estratégias clássicas: impõe unicidade estrita na carteira (sem bilhetes duplicados)
+  const seenKeys = new Set<string>();
+  const games: Array<{
+    numbers: number[];
+    reasoning: string;
+    passedAllRules: boolean;
+    validation: GameValidationDetails;
+    advancedMetrics: AdvancedBetMetrics;
+  }> = [];
+
+  for (let i = 0; i < safePortfolioSize; i++) {
+    let chosen = generateGameWithRules(quantity, logic, referenceNumbers, analyticsOverride);
+    let key = chosen.numbers.join('-');
+    let dedupTries = 0;
+
+    while (seenKeys.has(key) && dedupTries < 18) {
+      dedupTries++;
+      chosen = generateGameWithRules(quantity, logic, referenceNumbers, analyticsOverride);
+      key = chosen.numbers.join('-');
+    }
+
+    if (seenKeys.has(key)) {
+      let mutGuard = 0;
+      while (seenKeys.has(key) && mutGuard < 50) {
+        mutGuard++;
+        const candidateSet = new Set(chosen.numbers);
+        const arr = [...chosen.numbers];
+        arr.splice(Math.floor(Math.random() * arr.length), 1);
+        const replacement = Math.floor(Math.random() * 60) + 1;
+        if (!candidateSet.has(replacement)) {
+          arr.push(replacement);
+          const sorted = arr.sort((a, b) => a - b);
+          const newKey = sorted.join('-');
+          if (!seenKeys.has(newKey)) {
+            const validation = validateGameAgainstRules(sorted, logic, referenceNumbers, analyticsOverride);
+            chosen = {
+              numbers: sorted,
+              reasoning: chosen.reasoning + ' (Ajuste anti-duplicata em carteira)',
+              passedAllRules: validation.allActiveRulesPassed,
+              validation,
+              advancedMetrics: buildAdvancedBetMetrics(validation, logic.calculationStrategy || 'balanced')
+            };
+            key = newKey;
+          }
+        }
+      }
+    }
+
+    seenKeys.add(key);
+    games.push(chosen);
+  }
+
+  const coverage = analyzePortfolioCoverage(games.map(g => g.numbers), 60);
+  return { games, coverage };
 };
