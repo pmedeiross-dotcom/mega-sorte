@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { GeneratorLogic, OfficialDrawResult } from '../types';
 import { generatePortfolioWithRules } from '../utils/lotteryRules';
+import { generateHybridCoveragePortfolio } from '../utils/hybridCoverageStrategy';
 import { exportProspectiveAuditPdf } from '../utils/comparatorPdfExport';
 import {
   ProspectiveAuditEntry,
@@ -55,7 +56,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
 
   const [targetContest, setTargetContest] = useState<number>(() => (latestOfficialDraw?.contestNumber || 3069) + 1);
   const [ticketCount, setTicketCount] = useState<number>(78);
-  const [strategyChoice, setStrategyChoice] = useState<'combinatorial_cover' | 'combinatorial_plausible' | 'classic_dedup'>('combinatorial_cover');
+  const [strategyChoice, setStrategyChoice] = useState<'hybrid_combinatorial' | 'combinatorial_cover' | 'combinatorial_plausible' | 'classic_dedup'>('hybrid_combinatorial');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSimulating50, setIsSimulating50] = useState(false);
   const [viewFilter, setViewFilter] = useState<'real' | 'synthetic' | 'all'>('real');
@@ -78,7 +79,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       let optimizedGames: number[][];
       let strategyLabel: string;
 
-      if (strategyChoice === 'combinatorial_cover') {
+      if (strategyChoice === 'hybrid_combinatorial') {\n        optimizedGames = generateHybridCoveragePortfolio(safeSize, { betSize: 6, seed: Date.now(), candidatesPerTicket: 320 }).games;\n        strategyLabel = 'Estratégia Híbrida de Cobertura Combinatória';\n      } else if (strategyChoice === 'combinatorial_cover') {
         optimizedGames = generateCombinatorialPortfolio(safeSize, {
           betSize: 6,
           maxNum: 60,
