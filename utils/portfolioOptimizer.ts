@@ -50,7 +50,7 @@ export interface ProspectiveAuditEntry {
   targetContest: number;
   createdAt: number;
   strategyLabel: string;
-  strategyKey: 'combinatorial_cover' | 'combinatorial_plausible' | 'classic_dedup';
+  strategyKey: 'hybrid_combinatorial' | 'combinatorial_cover' | 'combinatorial_plausible' | 'classic_dedup';
   ticketCount: number;
   betSize: number;
   ticketPrice: number;

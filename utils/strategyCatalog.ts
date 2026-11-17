@@ -9,6 +9,13 @@ export interface StrategyMetadata {
 }
 
 export const STRATEGY_CATALOG: Record<CalculationStrategy, StrategyMetadata> = {
+  hybrid_combinatorial: {
+    id: 'hybrid_combinatorial',
+    name: 'Estratégia Híbrida de Cobertura Combinatória',
+    shortName: 'Híbrida',
+    badge: '🧬 Híbrida Combinatória',
+    description: 'Pares e trincas inéditos + equilíbrio de dezenas + soma, paridade e dispersão como critérios suaves'
+  },
   combinatorial_cover: {
     id: 'combinatorial_cover',
     name: 'Cobertura Anti-Colisão',
@@ -55,6 +62,7 @@ export const STRATEGY_CATALOG: Record<CalculationStrategy, StrategyMetadata> = {
 
 export const STRATEGY_LABELS: Record<CalculationStrategy, string> = {
   combinatorial_cover: STRATEGY_CATALOG.combinatorial_cover.name,
+  hybrid_combinatorial: STRATEGY_CATALOG.hybrid_combinatorial.name,
   balanced: STRATEGY_CATALOG.balanced.name,
   momentum: STRATEGY_CATALOG.momentum.name,
   cycle_delay: STRATEGY_CATALOG.cycle_delay.name,

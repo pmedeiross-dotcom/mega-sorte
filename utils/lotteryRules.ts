@@ -759,6 +759,35 @@ export const generatePortfolioWithRules = (
   const safePortfolioSize = Math.max(1, Math.min(300, portfolioSize));
   const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
 
+  if (logic.calculationStrategy === 'hybrid_combinatorial') {
+    const hybrid = generateHybridCoveragePortfolio(safePortfolioSize, {
+      betSize: quantity,
+      seed: Date.now(),
+      candidatesPerTicket: 320,
+      sumMin: 160,
+      sumMax: 240
+    });
+    const cleanLogic: GeneratorLogic = {
+      ...logic,
+      useAdvancedDuques: false,
+      paretoTopSelection: false,
+      preferHistoricalHotNumbers: false,
+      includeCycleDezenas: false,
+      repeat1to2: false
+    };
+    const games = hybrid.games.map((numbers, idx) => {
+      const validation = validateGameAgainstRules(numbers, cleanLogic, referenceNumbers, analyticsOverride);
+      return {
+        numbers,
+        reasoning: `Estratégia Híbrida (#${idx + 1}/${safePortfolioSize}): cobertura de pares/trincas + equilíbrio de frequência + critérios estruturais suaves. Soma ${numbers.reduce((a, b) => a + b, 0)}. Seed ${hybrid.seed}.`,
+        passedAllRules: validation.allActiveRulesPassed,
+        validation,
+        advancedMetrics: buildAdvancedBetMetrics(validation, 'hybrid_combinatorial')
+      };
+    });
+    return { games, coverage: hybrid.coverage };
+  }
+
   if (logic.calculationStrategy === 'combinatorial_cover') {
     const requestedSubPool = logic.portfolioSubPoolSize ?? 60;
     const subPoolSize = [24, 30, 36, 42, 60].includes(requestedSubPool) ? requestedSubPool : 60;

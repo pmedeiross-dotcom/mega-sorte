@@ -19,7 +19,8 @@ export type CalculationStrategy =
   | 'cycle_delay'        // Pressão Estatística (Z-Score de Atraso & Fechamento de Ciclo)
   | 'cooccurrence'       // Coocorrência & Duques de Alta Afinidade (Lift Positivo)
   | 'entropy_shannon'    // Máxima Entropia de Shannon & Dispersão Uniforme
-  | 'combinatorial_cover'; // Otimização Combinatória Anti-Colisão de Carteira (Recomendado)
+  | 'combinatorial_cover' // Otimização Combinatória Anti-Colisão de Carteira
+  | 'hybrid_combinatorial'; // Cobertura combinatória + critérios estruturais suaves
 
 export interface AdvancedBetMetrics {
   duquePair?: [number, number];

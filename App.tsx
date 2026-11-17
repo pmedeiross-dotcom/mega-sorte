@@ -2720,12 +2720,12 @@ const App: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* 2 Estratégias Principais */}
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {(['combinatorial_cover', 'balanced'] as const).map(id => {
+                        {/* Estratégias principais */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                          {(['hybrid_combinatorial', 'combinatorial_cover', 'balanced'] as const).map(id => {
                             const meta = STRATEGY_CATALOG[id];
                             const isActive = activeStrategy === id;
-                            const label = id === 'combinatorial_cover' ? `🛡️ ${meta.shortName} (Rec.)` : meta.badge;
+                            const label = id === 'hybrid_combinatorial' ? `🧬 ${meta.shortName} (Nova)` : id === 'combinatorial_cover' ? `🛡️ ${meta.shortName}` : meta.badge;
                             return (
                               <button
                                 key={id}
