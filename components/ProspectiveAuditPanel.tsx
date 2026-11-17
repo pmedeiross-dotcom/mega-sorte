@@ -510,7 +510,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
               onChange={e => setStrategyChoice(e.target.value as typeof strategyChoice)}
               className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold text-slate-800 text-xs sm:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="combinatorial_cover">Cobertura Combinatória Pura (Anti-Colisão)</option>
+              <option value="hybrid_combinatorial">Estratégia Híbrida de Cobertura Combinatória</option>\n              <option value="combinatorial_cover">Cobertura Combinatória Pura (Anti-Colisão)</option>
               <option value="combinatorial_plausible">Cobertura + Plausibilidade Estrutural</option>
               <option value="classic_dedup">Algoritmo Clássico Deduplicado (Comparação)</option>
             </select>
