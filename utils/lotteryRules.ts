@@ -780,7 +780,7 @@ export const generatePortfolioWithRules = (
       return {
         numbers,
         reasoning: `Estratégia Híbrida (#${idx + 1}/${safePortfolioSize}): cobertura de pares/trincas + equilíbrio de frequência + critérios estruturais suaves. Soma ${numbers.reduce((a, b) => a + b, 0)}. Seed ${hybrid.seed}.`,
-        passedAllRules: true,
+        passedAllRules: validation.allActiveRulesPassed,
         validation,
         advancedMetrics: buildAdvancedBetMetrics(validation, 'hybrid_combinatorial')
       };
