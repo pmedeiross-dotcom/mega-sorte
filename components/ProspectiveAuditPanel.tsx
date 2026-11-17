@@ -79,7 +79,10 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       let optimizedGames: number[][];
       let strategyLabel: string;
 
-      if (strategyChoice === 'hybrid_combinatorial') {\n        optimizedGames = generateHybridCoveragePortfolio(safeSize, { betSize: 6, seed: Date.now(), candidatesPerTicket: 320 }).games;\n        strategyLabel = 'Estratégia Híbrida de Cobertura Combinatória';\n      } else if (strategyChoice === 'combinatorial_cover') {
+      if (strategyChoice === 'hybrid_combinatorial') {
+        optimizedGames = generateHybridCoveragePortfolio(safeSize, { betSize: 6, seed: Date.now(), candidatesPerTicket: 320 }).games;
+        strategyLabel = 'Estratégia Híbrida de Cobertura Combinatória';
+      } else if (strategyChoice === 'combinatorial_cover') {
         optimizedGames = generateCombinatorialPortfolio(safeSize, {
           betSize: 6,
           maxNum: 60,
@@ -197,7 +200,9 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       for (let i = 0; i < 50; i++) {
         const usePlausibility = strategyChoice === 'combinatorial_plausible';
         const optimizedGames =
-          strategyChoice === 'classic_dedup'
+          strategyChoice === 'hybrid_combinatorial'
+            ? generateHybridCoveragePortfolio(safeSize, { betSize: 6, seed: ((baseContest + i) * 1009) >>> 0, candidatesPerTicket: 160 }).games
+            : strategyChoice === 'classic_dedup'
             ? generatePortfolioWithRules(safeSize, 6, { ...logicOptions, calculationStrategy: 'balanced' }, latestOfficialDraw.numbers).games.map(g => g.numbers)
             : generateCombinatorialPortfolio(safeSize, {
                 betSize: 6,
@@ -225,7 +230,9 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
           targetContest: cNum,
           createdAt,
           strategyLabel:
-            strategyChoice === 'classic_dedup'
+            strategyChoice === 'hybrid_combinatorial'
+              ? 'Estratégia Híbrida (Benchmark 50)'
+              : strategyChoice === 'classic_dedup'
               ? 'Clássico Deduplicado (Benchmark 50)'
               : usePlausibility
               ? 'Cobertura + Plausibilidade (Benchmark 50)'
@@ -510,7 +517,8 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
               onChange={e => setStrategyChoice(e.target.value as typeof strategyChoice)}
               className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold text-slate-800 text-xs sm:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="hybrid_combinatorial">Estratégia Híbrida de Cobertura Combinatória</option>\n              <option value="combinatorial_cover">Cobertura Combinatória Pura (Anti-Colisão)</option>
+              <option value="hybrid_combinatorial">Estratégia Híbrida de Cobertura Combinatória</option>
+              <option value="combinatorial_cover">Cobertura Combinatória Pura (Anti-Colisão)</option>
               <option value="combinatorial_plausible">Cobertura + Plausibilidade Estrutural</option>
               <option value="classic_dedup">Algoritmo Clássico Deduplicado (Comparação)</option>
             </select>
