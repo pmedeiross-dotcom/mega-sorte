@@ -17,19 +17,23 @@ import {
   CheckCircle2,
   BookmarkPlus,
   Wrench,
-  Filter
+  Filter,
+  FileDown,
+  Calculator
 } from 'lucide-react';
 import { Bet, CalculationStrategy, GeneratorLogic, LotteryType, OfficialDrawResult } from '../types';
 import {
   BacktestSummary,
   CalibrationResult,
-  STRATEGY_LABELS,
   calibrateStrategyAgainstHistory,
   extractTernoStatsProfile,
   getHistoricalDrawsForBacktest,
   runBacktestRange
 } from '../utils/backtestingEngine';
+import { getStrategyMeta, STRATEGY_LABELS } from '../utils/strategyCatalog';
+import { exportBacktestingPdf, exportDirectComparisonPdf } from '../utils/comparatorPdfExport';
 import { ProspectiveAuditPanel } from './ProspectiveAuditPanel';
+import ProbabilitySimulatorView from './ProbabilitySimulatorView';
 
 interface GameComparatorViewProps {
   savedBets: Bet[];
@@ -46,6 +50,10 @@ interface GameComparatorViewProps {
   ) => void;
   onSavePortfolioToHistory?: (games: number[][], label: string) => void;
   onGoToGenerator?: () => void;
+  requestedSubMode?: {
+    mode: 'direct' | 'simulator' | 'backtesting' | 'prospective';
+    nonce: number;
+  };
 }
 
 const DEFAULT_LOGIC: GeneratorLogic = {
@@ -64,7 +72,7 @@ const DEFAULT_LOGIC: GeneratorLogic = {
   includeCycleDezenas: true,
   multiplesOfThreeBalance: true,
   rowAndColDispersion: true,
-  calculationStrategy: 'balanced',
+  calculationStrategy: 'combinatorial_cover',
   strictPlausibilityFilter: true
 };
 
@@ -77,7 +85,8 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   betCount,
   onAddBet,
   onSavePortfolioToHistory,
-  onGoToGenerator
+  onGoToGenerator,
+  requestedSubMode
 }) => {
   const lottery: LotteryType = lotteryProp ?? 'megasena';
   const isLotofacil = lottery === 'lotofacil';
@@ -85,8 +94,20 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   const maxLimit = isLotofacil ? 25 : (isMaisMilionaria ? 50 : 60);
   const ticketSize = betCount || (isLotofacil ? 15 : 6);
 
-  // Modo ativo dentro do Comparador
-  const [subMode, setSubMode] = useState<'direct' | 'backtesting' | 'prospective'>('direct');
+  // Modo ativo dentro do Comparador & Simulador
+  const [subMode, setSubMode] = useState<'direct' | 'simulator' | 'backtesting' | 'prospective'>(
+    requestedSubMode?.mode || 'direct'
+  );
+
+  useEffect(() => {
+    if (requestedSubMode) {
+      if (requestedSubMode.mode === 'prospective' && lottery !== 'megasena') {
+        setSubMode('direct');
+      } else {
+        setSubMode(requestedSubMode.mode);
+      }
+    }
+  }, [requestedSubMode?.nonce, lottery]);
 
   // ==================== COMPARAÇÃO DIRETA ====================
   const [selectedBetIds, setSelectedBetIds] = useState<string[]>(() => {
@@ -251,7 +272,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   });
 
   const [testStrategy, setTestStrategy] = useState<CalculationStrategy>(
-    logicOptions?.calculationStrategy || 'balanced'
+    logicOptions?.calculationStrategy || 'combinatorial_cover'
   );
   const [usePlausibilityTest, setUsePlausibilityTest] = useState<boolean>(
     logicOptions?.strictPlausibilityFilter !== false
@@ -267,6 +288,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
   const [ternoFilterThreshold, setTernoFilterThreshold] = useState<number>(isLotofacil ? 11 : 3);
   const [savedContestIds, setSavedContestIds] = useState<Set<number>>(new Set());
   const [appliedLogicToast, setAppliedLogicToast] = useState<string | null>(null);
+  const [directPdfToast, setDirectPdfToast] = useState<string | null>(null);
 
   // Sincroniza limites e metas ao trocar de loteria
   useEffect(() => {
@@ -472,6 +494,52 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
     }));
   }, [backtestSummary, isLotofacil]);
 
+  const handleExportBacktestingPdf = () => {
+    if (!backtestSummary) return;
+    const filterLabels: Record<'all' | 'exact_terno' | 'min_target' | 'prizes', string> = {
+      all: `Todos (${backtestSummary.results.length})`,
+      exact_terno: isLotofacil
+        ? `11 Acertos (${backtestSummary.hitsDistribution[11] || 0})`
+        : `3 Acertos - Terno (${backtestSummary.hitsDistribution[3] || 0})`,
+      min_target: isLotofacil ? '11+ Acertos' : '3+ Acertos',
+      prizes: `Premiados (${backtestSummary.totalPrizes})`
+    };
+    const sortLabels: Record<'contest_desc' | 'hits_desc', string> = {
+      contest_desc: 'Concurso Mais Recente',
+      hits_desc: 'Maior Quantidade de Acertos'
+    };
+
+    const filename = exportBacktestingPdf({
+      lottery,
+      summary: backtestSummary,
+      calibrationResult,
+      filteredRows: filteredBacktestRows,
+      activeFilterLabel: filterLabels[backtestResultFilter],
+      sortLabel: sortLabels[backtestSortBy],
+      distributionTiers,
+      ternoProfile: ternoExtractedProfile,
+      activeRulesCount,
+      usePlausibilityTest
+    });
+    setAppliedLogicToast(`PDF gerado: ${filename}`);
+    setTimeout(() => setAppliedLogicToast(null), 4000);
+  };
+
+  const handleExportDirectPdf = () => {
+    if (selectedBets.length < 2) return;
+    const filename = exportDirectComparisonPdf({
+      lottery,
+      maxLimit,
+      selectedBets,
+      commonNumbers,
+      unionNumbers,
+      pairwiseStats,
+      verdict
+    });
+    setDirectPdfToast(`PDF gerado: ${filename}`);
+    setTimeout(() => setDirectPdfToast(null), 4000);
+  };
+
   const themeAccentButton = isLotofacil
     ? 'bg-purple-600 hover:bg-purple-700'
     : isMaisMilionaria
@@ -480,12 +548,12 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Seletor de Sub-Modo do Comparador (sempre visível independente da carteira) */}
-      <div className="bg-white rounded-3xl p-2 border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-2">
+      {/* Seletor de Sub-Modo do Comparador & Simulador */}
+      <div className="bg-white rounded-3xl p-2 border border-slate-200 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:flex gap-2">
         <button
           type="button"
           onClick={() => setSubMode('direct')}
-          className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`flex-1 py-3 px-3 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
             subMode === 'direct'
               ? isLotofacil
                 ? 'bg-purple-600 text-white shadow-md'
@@ -496,13 +564,30 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
           }`}
         >
           <GitCompare size={17} />
-          <span>Comparação Direta de Apostas</span>
+          <span>Comparação Direta</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSubMode('simulator')}
+          className={`flex-1 py-3 px-3 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            subMode === 'simulator'
+              ? isLotofacil
+                ? 'bg-purple-600 text-white shadow-md'
+                : isMaisMilionaria
+                ? 'bg-amber-600 text-white shadow-md'
+                : 'bg-emerald-700 text-white shadow-md'
+              : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <Calculator size={17} />
+          <span>Probabilidades</span>
         </button>
 
         <button
           type="button"
           onClick={() => setSubMode('backtesting')}
-          className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+          className={`flex-1 py-3 px-3 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
             subMode === 'backtesting'
               ? isLotofacil
                 ? 'bg-purple-600 text-white shadow-md'
@@ -513,11 +598,11 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
           }`}
         >
           <History size={17} />
-          <span>Modo Backtesting Histórico</span>
+          <span>Backtesting Histórico</span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
             subMode === 'backtesting' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
           }`}>
-            Concursos Reais
+            Reais
           </span>
         </button>
 
@@ -525,14 +610,14 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
           <button
             type="button"
             onClick={() => setSubMode('prospective')}
-            className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            className={`flex-1 py-3 px-3 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
               subMode === 'prospective'
                 ? 'bg-emerald-700 text-white shadow-md'
                 : 'text-slate-600 hover:bg-slate-50'
             }`}
           >
             <ShieldCheck size={17} />
-            <span>Auditoria Prospectiva (50 Concursos)</span>
+            <span>Auditoria Prospectiva</span>
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
               subMode === 'prospective' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-800'
             }`}>
@@ -541,6 +626,19 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
           </button>
         )}
       </div>
+
+      {/* ==================== CONTEÚDO: SIMULADOR DE PROBABILIDADES ==================== */}
+      {subMode === 'simulator' && (
+        <ProbabilitySimulatorView
+          savedBets={savedBets}
+          latestDraw={latestDraw}
+          lottery={lottery}
+          onAddBet={(numbers, type, reasoning) => {
+            if (onAddBet) onAddBet(numbers, type, reasoning);
+          }}
+          onGoToGenerator={onGoToGenerator}
+        />
+      )}
 
       {/* ==================== CONTEÚDO: MODO BACKTESTING ==================== */}
       {subMode === 'backtesting' && (
@@ -711,7 +809,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                   </label>
 
                   {onUpdateLogicOptions && (
-                    testStrategy !== (logicOptions?.calculationStrategy || 'balanced') ||
+                    testStrategy !== (logicOptions?.calculationStrategy || 'combinatorial_cover') ||
                     usePlausibilityTest !== (logicOptions?.strictPlausibilityFilter !== false)
                   ) && (
                     <button
@@ -860,7 +958,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                   </span>
                   <p className="text-2xl font-black text-slate-900 mt-1">{backtestSummary.averageHits}</p>
                   <span className="text-[11px] text-slate-500">
-                    Modelo: {STRATEGY_LABELS[backtestSummary.strategyUsed].split(' ')[0]}
+                    Modelo: {getStrategyMeta(backtestSummary.strategyUsed).shortName}
                   </span>
                 </div>
 
@@ -1108,7 +1206,7 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[11px] font-bold text-slate-500">Ordenar:</span>
                     <select
                       value={backtestSortBy}
@@ -1118,6 +1216,15 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                       <option value="contest_desc">Concurso Mais Recente</option>
                       <option value="hits_desc">Maior Quantidade de Acertos</option>
                     </select>
+
+                    <button
+                      type="button"
+                      onClick={handleExportBacktestingPdf}
+                      className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                    >
+                      <FileDown size={14} />
+                      <span>Gerar PDF</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1346,7 +1453,15 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExportDirectPdf}
+                    className="px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white border border-white/25 font-black text-xs transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+                  >
+                    <FileDown size={14} />
+                    <span>Gerar PDF</span>
+                  </button>
                   {onAddBet && (
                     <button
                       onClick={handleGenerateDivergentBet}
@@ -1359,6 +1474,13 @@ export const GameComparatorView: React.FC<GameComparatorViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {directPdfToast && (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-black flex items-center gap-2 shadow-sm">
+                <CheckCircle2 size={18} className="text-emerald-600 flex-shrink-0" />
+                <span>{directPdfToast}</span>
+              </div>
+            )}
 
             {/* Seletor Rápido de Jogos para Comparar */}
             <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-sm space-y-3">

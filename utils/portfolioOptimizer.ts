@@ -145,9 +145,9 @@ export function generateRandomDistinctPortfolio(
 /**
  * Gera uma carteira matematicamente otimizada por Cobertura Combinatória Anti-Colisão:
  * - Zero bilhetes duplicados
- * - Frequência uniforme por dezena (M * betSize / maxNum)
- * - Maximiza pares e trincas inéditas (minimiza colisões e covariância positiva)
- * - Opção opcional de filtro estrutural (Soma/Paridade/Quadrantes) sem nenhum viés por dezena
+ * - Frequência uniforme por dezena no universo ativo (60 ou sub-pool selecionado)
+ * - Maximiza pares e trincas inéditas e penaliza diretamente colisões de trincas repetidas
+ * - Opção de filtro estrutural (Soma/Paridade/Quadrantes) sem nenhum viés por dezena
  */
 export function generateCombinatorialPortfolio(
   portfolioSize: number,
@@ -156,6 +156,7 @@ export function generateCombinatorialPortfolio(
     maxNum?: number;
     useStructuralPlausibility?: boolean;
     candidatesPerTicket?: number;
+    subPoolNumbers?: number[];
   }
 ): number[][] {
   const betSize = Math.max(6, Math.min(15, options?.betSize ?? 6));
@@ -164,14 +165,30 @@ export function generateCombinatorialPortfolio(
   const safeSize = Math.max(1, Math.min(500, portfolioSize));
   const candidatesPerTicket = options?.candidatesPerTicket ?? (safeSize <= 100 ? 320 : 180);
 
+  const activePool =
+    options?.subPoolNumbers && options.subPoolNumbers.length >= betSize
+      ? Array.from(new Set(options.subPoolNumbers.filter(n => n >= 1 && n <= maxNum))).sort((a, b) => a - b)
+      : Array.from({ length: maxNum }, (_, i) => i + 1);
+
   const pairSeen = new Uint16Array((maxNum + 1) * (maxNum + 1));
-  const tripleSeen = new Set<number>();
+  const tripleCounts = new Map<number, number>();
   const numFreq = new Uint16Array(maxNum + 1);
   const usedTickets = new Set<string>();
   const games: number[][] = [];
 
-  const targetPerNum = (safeSize * betSize) / maxNum;
-  const baseOrder = Array.from({ length: maxNum }, (_, i) => i + 1);
+  const targetPerNum = (safeSize * betSize) / activePool.length;
+  const baseOrder = [...activePool];
+
+  const drawFromActivePool = (): number[] => {
+    const copy = [...activePool];
+    for (let i = 0; i < betSize; i++) {
+      const j = i + Math.floor(Math.random() * (copy.length - i));
+      const tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
+    }
+    return copy.slice(0, betSize).sort((a, b) => a - b);
+  };
 
   for (let g = 0; g < safeSize; g++) {
     let bestCombo: number[] = [];
@@ -202,12 +219,15 @@ export function generateCombinatorialPortfolio(
       }
 
       let newTriples = 0;
+      let tripleCollisionPenalty = 0;
       if (betSize <= 9) {
         for (let i = 0; i < betSize; i++) {
           for (let j = i + 1; j < betSize; j++) {
             for (let l = j + 1; l < betSize; l++) {
               const code = (combo[i] << 12) | (combo[j] << 6) | combo[l];
-              if (!tripleSeen.has(code)) newTriples++;
+              const tCnt = tripleCounts.get(code) || 0;
+              if (tCnt === 0) newTriples++;
+              else tripleCollisionPenalty += tCnt * tCnt;
             }
           }
         }
@@ -221,8 +241,9 @@ export function generateCombinatorialPortfolio(
 
       const score =
         newPairs * 25 +
-        newTriples * 8 -
+        newTriples * 10 -
         pairCollisionPenalty * 6 -
+        tripleCollisionPenalty * 14 -
         freqImbalance * 3.5;
 
       if (score > bestScore) {
@@ -233,9 +254,9 @@ export function generateCombinatorialPortfolio(
 
     if (bestCombo.length !== betSize) {
       let guard = 0;
-      while (guard < 200) {
+      while (guard < 250) {
         guard++;
-        const fallback = drawRandomTicket(betSize, maxNum);
+        const fallback = drawFromActivePool();
         const key = fallback.join('-');
         if (!usedTickets.has(key)) {
           bestCombo = fallback;
@@ -243,7 +264,7 @@ export function generateCombinatorialPortfolio(
         }
       }
       if (bestCombo.length !== betSize) {
-        bestCombo = drawRandomTicket(betSize, maxNum);
+        bestCombo = drawFromActivePool();
       }
     }
 
@@ -260,7 +281,8 @@ export function generateCombinatorialPortfolio(
       for (let i = 0; i < betSize; i++) {
         for (let j = i + 1; j < betSize; j++) {
           for (let l = j + 1; l < betSize; l++) {
-            tripleSeen.add((bestCombo[i] << 12) | (bestCombo[j] << 6) | bestCombo[l]);
+            const code = (bestCombo[i] << 12) | (bestCombo[j] << 6) | bestCombo[l];
+            tripleCounts.set(code, (tripleCounts.get(code) || 0) + 1);
           }
         }
       }

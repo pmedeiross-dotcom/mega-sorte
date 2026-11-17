@@ -173,8 +173,18 @@ export const validateGameAgainstRules = (
   }
   const repeatValid = !logic.repeat1to2 || (repeatedCount >= 1 && repeatedCount <= 2);
 
-  // 8. Alinhamento com o histórico oficial de todos os concursos
-  const historical = evaluateHistoricalAlignment(sorted);
+  // 8. Alinhamento com histórico (estritamente causal quando analyticsOverride é fornecido)
+  let customRankMap: Record<number, number> | undefined;
+  let customCountMap: Record<number, number> | undefined;
+  if (analyticsOverride) {
+    customRankMap = {};
+    customCountMap = {};
+    analyticsOverride.numbersAnalysis.forEach(item => {
+      customRankMap![item.number] = item.ranking;
+      customCountMap![item.number] = item.totalDraws;
+    });
+  }
+  const historical = evaluateHistoricalAlignment(sorted, customRankMap, customCountMap);
   const historicalHotValid = !logic.preferHistoricalHotNumbers || (historical.top20Count >= 2 && historical.top20Count <= 4);
 
   // Métricas e regras da Análise Avançada
@@ -288,9 +298,54 @@ export const validateGameAgainstRules = (
   };
 };
 
+export interface PortfolioGenerationContext {
+  freqCounts: Uint16Array | number[];
+  maxCap: number;
+  avgFreq: number;
+}
+
+const buildBalancedSubPool = (
+  subPoolSize: number,
+  analytics: MegaAnalyticsSnapshot
+): number[] => {
+  const analysisMap = new Map<number, { totalDraws: number; recentCountLast25: number }>();
+  analytics.numbersAnalysis.forEach(n => {
+    analysisMap.set(n.number, {
+      totalDraws: n.totalDraws,
+      recentCountLast25: n.recentCountLast25
+    });
+  });
+
+  const perRow = Math.floor(subPoolSize / 6);
+  const remainder = subPoolSize % 6;
+  const selected: number[] = [];
+
+  for (let row = 0; row < 6; row++) {
+    const start = row * 10 + 1;
+    const end = start + 9;
+    const rowNums: Array<{ num: number; score: number }> = [];
+    for (let num = start; num <= end; num++) {
+      const info = analysisMap.get(num);
+      const baseFreq = info ? info.totalDraws : (OFFICIAL_FREQUENCY_DATA[num] || 300);
+      const recent = info ? info.recentCountLast25 : 2;
+      // Combina base histórica, momento recente e leve empate orgânico sem olhar futuro
+      const score = baseFreq * 0.05 + recent * 1.4 + Math.random() * 0.25;
+      rowNums.push({ num, score });
+    }
+    rowNums.sort((a, b) => b.score - a.score);
+    const takeCount = perRow + (row < remainder ? 1 : 0);
+    for (let k = 0; k < takeCount && k < rowNums.length; k++) {
+      selected.push(rowNums[k].num);
+    }
+  }
+
+  return selected.sort((a, b) => a - b);
+};
+
 /**
  * Sorteia uma dezena com peso estatístico proporcional à estratégia de cálculo matemática escolhida,
- * frequência histórica de todos os concursos, decaimento temporal, pressão de atraso e dispersão de Shannon.
+ * frequência histórica de todos os concursos, decaimento temporal, pressão de atraso, dispersão de Shannon
+ * e teto máximo de repetição em carteira (anti-concentração).
  */
 const getAdvancedWeightedCandidate = (
   exclude: Set<number>, 
@@ -299,35 +354,49 @@ const getAdvancedWeightedCandidate = (
   currentFrame: number,
   rowCounts: number[],
   colCounts: number[],
-  analyticsOverride?: MegaAnalyticsSnapshot
+  analyticsOverride?: MegaAnalyticsSnapshot,
+  portfolioContext?: PortfolioGenerationContext
 ): number => {
   const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const pool: number[] = [];
   const strategy = logic.calculationStrategy || 'balanced';
 
-  // Mapa de status e atrasos para ponderação estocástica
-  const analysisMap = new Map<number, { status: string; delay: number; recentCount: number }>();
+  // Mapa de status, atrasos e frequência causal para ponderação estocástica
+  const analysisMap = new Map<number, { status: string; delay: number; recentCount: number; totalDraws: number }>();
+  let totalDrawsSum = 0;
   analytics.numbersAnalysis.forEach(n => {
+    totalDrawsSum += n.totalDraws;
     analysisMap.set(n.number, {
       status: n.status,
       delay: n.currentDelay,
-      recentCount: n.recentCountLast25
+      recentCount: n.recentCountLast25,
+      totalDraws: n.totalDraws
     });
   });
+  const meanSnapDraws = totalDrawsSum > 0 ? totalDrawsSum / Math.max(1, analytics.numbersAnalysis.length) : 300;
 
   const cycleMissing = new Set(analytics.cycleAnalysis.missingNumbers);
 
   for (let num = 1; num <= 60; num++) {
     if (exclude.has(num)) continue;
 
-    const data = analysisMap.get(num) || { status: 'morna', delay: 10, recentCount: 2 };
+    // Upgrade 1: Respeita teto máximo de frequência por dezena dentro da carteira
+    const currentPortfolioFreq = portfolioContext ? (portfolioContext.freqCounts[num] || 0) : 0;
+    if (portfolioContext && currentPortfolioFreq >= portfolioContext.maxCap) {
+      continue;
+    }
+
+    const data = analysisMap.get(num) || { status: 'morna', delay: 10, recentCount: 2, totalDraws: 300 };
 
     // Modo Cobertura Combinatória: peso estrutural uniforme (sem viés de popularidade histórica)
-    let weight = strategy === 'combinatorial_cover' ? 300 : (OFFICIAL_FREQUENCY_DATA[num] || 300);
+    // Quando analyticsOverride é fornecido (ex: backtest causal), evita consultar OFFICIAL_FREQUENCY_DATA global
+    const causalBaseWeight = analyticsOverride
+      ? Math.round((data.totalDraws / Math.max(1, meanSnapDraws)) * 300)
+      : (OFFICIAL_FREQUENCY_DATA[num] || 300);
+    let weight = strategy === 'combinatorial_cover' ? 300 : causalBaseWeight;
 
     // Modulação baseada na Estratégia de Cálculo Matemática:
     if (strategy === 'momentum') {
-      // Decaimento temporal & Momentum recente: amplifica dezenas em alta recente
       if (data.status === 'quente' || data.recentCount >= 4) {
         weight = Math.round(weight * 1.85);
       } else if (data.status === 'morna') {
@@ -336,7 +405,6 @@ const getAdvancedWeightedCandidate = (
         weight = Math.round(weight * 0.65);
       }
     } else if (strategy === 'cycle_delay') {
-      // Pressão Estatística & Fechamento de Ciclo: amplifica dezenas com alto atraso
       const isMissingCycle = cycleMissing.has(num);
       const isHighDelay = data.delay >= 18;
       if (isMissingCycle && isHighDelay) {
@@ -345,19 +413,17 @@ const getAdvancedWeightedCandidate = (
         weight = Math.round(weight * 1.70);
       }
     } else if (strategy === 'entropy_shannon') {
-      // Dispersão de Shannon: penaliza dezenas adjacentes aos números já sorteados
       let minDistance = 60;
       exclude.forEach(picked => {
         const dist = Math.abs(picked - num);
         if (dist < minDistance) minDistance = dist;
       });
       if (minDistance <= 1) {
-        weight = Math.round(weight * 0.25); // Evita colisão direta
+        weight = Math.round(weight * 0.25);
       } else if (minDistance >= 5 && minDistance <= 14) {
-        weight = Math.round(weight * 1.45); // Espaçamento harmônico
+        weight = Math.round(weight * 1.45);
       }
     } else if (strategy === 'cooccurrence') {
-      // Afinidade de Duques: amplifica dezenas que têm duques históricos com as já escolhidas
       let hasDuqueAffinity = false;
       for (const d of analytics.topDuques) {
         if (d.pair.includes(num)) {
@@ -407,7 +473,16 @@ const getAdvancedWeightedCandidate = (
       if (colCounts[col] >= 2) weight = Math.round(weight * 0.25);
     }
 
-    // Normaliza para amostras no pool
+    // 5. Rebalanceamento dinâmico de carteira (reduz coeficiente de Gini antes de bater no teto)
+    if (portfolioContext) {
+      const diff = portfolioContext.avgFreq - currentPortfolioFreq;
+      if (diff > 0) {
+        weight = Math.round(weight * (1 + Math.min(0.85, diff * 0.20)));
+      } else if (diff < 0) {
+        weight = Math.round(weight / (1 + Math.abs(diff) * 0.65));
+      }
+    }
+
     const tickets = Math.max(1, Math.round((weight - 200) / 6));
     for (let t = 0; t < tickets; t++) {
       pool.push(num);
@@ -415,9 +490,19 @@ const getAdvancedWeightedCandidate = (
   }
 
   if (pool.length === 0) {
+    // Fallback ordenado pelas dezenas menos repetidas na carteira caso o teto tenha restringido o grupo
+    const uncappedOrLowest: Array<{ num: number; freq: number }> = [];
     for (let num = 1; num <= 60; num++) {
-      if (!exclude.has(num)) pool.push(num);
+      if (!exclude.has(num)) {
+        uncappedOrLowest.push({
+          num,
+          freq: portfolioContext ? (portfolioContext.freqCounts[num] || 0) : 0
+        });
+      }
     }
+    uncappedOrLowest.sort((a, b) => a.freq - b.freq || Math.random() - 0.5);
+    const topSlice = uncappedOrLowest.slice(0, Math.min(8, uncappedOrLowest.length));
+    return topSlice[Math.floor(Math.random() * topSlice.length)].num;
   }
 
   const randomIndex = Math.floor(Math.random() * pool.length);
@@ -461,7 +546,8 @@ export const generateGameWithRules = (
   quantity: number = 6,
   logic: GeneratorLogic,
   referenceNumbers: number[] = [5, 19, 22, 44, 47, 57],
-  analyticsOverride?: MegaAnalyticsSnapshot
+  analyticsOverride?: MegaAnalyticsSnapshot,
+  portfolioContext?: PortfolioGenerationContext
 ): { 
   numbers: number[]; 
   reasoning: string; 
@@ -481,7 +567,7 @@ export const generateGameWithRules = (
       }
     : logic;
 
-  const maxAttempts = isCombinatorialMode ? 450 : 2500;
+  const maxAttempts = isCombinatorialMode ? 450 : 1200;
   let bestAttempt: number[] = [];
   let bestScore = -1;
   let bestValidation: GameValidationDetails | null = null;
@@ -491,42 +577,47 @@ export const generateGameWithRules = (
   const paretoNumbers = analytics.paretoTopNumbers.map(p => p.number);
   const cycleMissing = analytics.cycleAnalysis.missingNumbers;
 
+  const isUnderCap = (num: number): boolean =>
+    !portfolioContext || (portfolioContext.freqCounts[num] || 0) < portfolioContext.maxCap;
+
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const candidates: Set<number> = new Set();
 
-    // 1. Pilar Avançado: Semente com Duque Histórico mais sorteado
-    if (effectiveLogic.useAdvancedDuques && topDuques.length > 0 && Math.random() > 0.15) {
-      // Escolhe um dos 6 melhores duques da história da Mega-Sena
-      const duqueIndex = Math.floor(Math.random() * Math.min(6, topDuques.length));
+    // 1. Pilar Avançado: Semente com Duque Histórico mais sorteado (respeitando cap da carteira)
+    if (effectiveLogic.useAdvancedDuques && topDuques.length > 0 && Math.random() > 0.25) {
+      const duqueIndex = Math.floor(Math.random() * Math.min(8, topDuques.length));
       const duque = topDuques[duqueIndex];
-      candidates.add(duque.pair[0]);
-      candidates.add(duque.pair[1]);
+      if (isUnderCap(duque.pair[0]) && isUnderCap(duque.pair[1])) {
+        candidates.add(duque.pair[0]);
+        candidates.add(duque.pair[1]);
+      }
     }
 
-    // 2. Repetição de 1-2 dezenas do sorteio de referência
+    // 2. Repetição de 1-2 dezenas do sorteio de referência (respeitando cap)
     if (effectiveLogic.repeat1to2 && referenceNumbers && referenceNumbers.length >= 2) {
       const repeatCount = Math.random() > 0.4 ? 2 : 1;
       const shuffledRef = [...referenceNumbers].sort(() => 0.5 - Math.random());
-      for (let i = 0; i < Math.min(repeatCount, shuffledRef.length); i++) {
-        if (candidates.size < quantity) {
+      for (let i = 0; i < shuffledRef.length && candidates.size < quantity; i++) {
+        if (isUnderCap(shuffledRef[i])) {
           candidates.add(shuffledRef[i]);
+          if (candidates.size >= repeatCount) break;
         }
       }
     }
 
     // 3. Pilar Avançado: Dezena faltante do Ciclo Atual da Mega-Sena
     if (effectiveLogic.includeCycleDezenas && cycleMissing.length > 0 && Math.random() > 0.25) {
-      const missingCandidate = cycleMissing[Math.floor(Math.random() * cycleMissing.length)];
-      if (candidates.size < quantity) {
-        candidates.add(missingCandidate);
+      const uncappedCycle = cycleMissing.filter(isUnderCap);
+      if (uncappedCycle.length > 0 && candidates.size < quantity) {
+        candidates.add(uncappedCycle[Math.floor(Math.random() * uncappedCycle.length)]);
       }
     }
 
     // 4. Pilar Avançado: Dezenas do Top 20% Pareto da Mega-Sena
     if (effectiveLogic.paretoTopSelection && paretoNumbers.length > 0 && Math.random() > 0.2) {
-      const paretoCandidate = paretoNumbers[Math.floor(Math.random() * paretoNumbers.length)];
-      if (candidates.size < quantity) {
-        candidates.add(paretoCandidate);
+      const uncappedPareto = paretoNumbers.filter(isUnderCap);
+      if (uncappedPareto.length > 0 && candidates.size < quantity) {
+        candidates.add(uncappedPareto[Math.floor(Math.random() * uncappedPareto.length)]);
       }
     }
 
@@ -535,15 +626,19 @@ export const generateGameWithRules = (
       const tp = effectiveLogic.ternoBoostProfile;
       if (tp.topPairs.length > 0 && Math.random() > 0.45 && candidates.size + 2 <= quantity) {
         const pair = tp.topPairs[Math.floor(Math.random() * Math.min(4, tp.topPairs.length))];
-        candidates.add(pair[0]);
-        candidates.add(pair[1]);
+        if (isUnderCap(pair[0]) && isUnderCap(pair[1])) {
+          candidates.add(pair[0]);
+          candidates.add(pair[1]);
+        }
       } else if (tp.matchedHotNumbers.length > 0 && candidates.size < quantity) {
-        const hot = tp.matchedHotNumbers[Math.floor(Math.random() * tp.matchedHotNumbers.length)];
-        candidates.add(hot);
+        const uncappedHot = tp.matchedHotNumbers.filter(isUnderCap);
+        if (uncappedHot.length > 0) {
+          candidates.add(uncappedHot[Math.floor(Math.random() * uncappedHot.length)]);
+        }
       }
     }
 
-    // 5. Preenchimento probabilístico com ponderação analítica avançada
+    // 5. Preenchimento probabilístico com ponderação analítica avançada + equilíbrio em carteira
     let fillAttempts = 0;
     while (candidates.size < quantity && fillAttempts < 100) {
       fillAttempts++;
@@ -563,7 +658,8 @@ export const generateGameWithRules = (
         currentFrame, 
         rowCounts, 
         colCounts,
-        analyticsOverride
+        analyticsOverride,
+        portfolioContext
       );
       candidates.add(candidate);
     }
@@ -573,7 +669,6 @@ export const generateGameWithRules = (
 
     const validation = validateGameAgainstRules(testNumbers, effectiveLogic, referenceNumbers, analyticsOverride);
 
-    // Se passou em todas as regras ativas
     if (validation.allActiveRulesPassed) {
       const highlights: string[] = [];
       if (validation.matchedDuqueName) highlights.push(`Duque ${validation.matchedDuqueName}`);
@@ -618,7 +713,6 @@ export const generateGameWithRules = (
     }
   }
 
-  // Melhor combinação encontrada como fallback
   const finalNumbers = bestAttempt.length === quantity ? bestAttempt : generateBasicBalancedNumbers(quantity);
   const fallbackValidation = bestValidation || validateGameAgainstRules(finalNumbers, effectiveLogic, referenceNumbers, analyticsOverride);
 
@@ -642,8 +736,9 @@ const generateBasicBalancedNumbers = (quantity: number): number[] => {
 };
 
 /**
- * Gera uma carteira completa de M jogos com desduplicação obrigatória entre bilhetes.
- * Quando a estratégia é 'combinatorial_cover', aplica o otimizador anti-colisão em nível de carteira.
+ * Gera uma carteira completa de M jogos com desduplicação obrigatória, teto de frequência
+ * por dezena e cotas suaves entre bilhetes.
+ * Quando a estratégia é 'combinatorial_cover', aplica o otimizador anti-colisão (com suporte opcional a sub-pool K).
  */
 export const generatePortfolioWithRules = (
   portfolioSize: number,
@@ -662,12 +757,18 @@ export const generatePortfolioWithRules = (
   coverage: PortfolioCoverageMetrics;
 } => {
   const safePortfolioSize = Math.max(1, Math.min(300, portfolioSize));
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
 
   if (logic.calculationStrategy === 'combinatorial_cover') {
+    const requestedSubPool = logic.portfolioSubPoolSize ?? 60;
+    const subPoolSize = [24, 30, 36, 42, 60].includes(requestedSubPool) ? requestedSubPool : 60;
+    const subPoolNumbers = subPoolSize < 60 ? buildBalancedSubPool(subPoolSize, analytics) : undefined;
+
     const rawGames = generateCombinatorialPortfolio(safePortfolioSize, {
       betSize: quantity,
       maxNum: 60,
-      useStructuralPlausibility: logic.strictPlausibilityFilter !== false
+      useStructuralPlausibility: logic.strictPlausibilityFilter !== false,
+      subPoolNumbers
     });
     const coverage = analyzePortfolioCoverage(rawGames, 60);
     const cleanLogic: GeneratorLogic = {
@@ -678,11 +779,15 @@ export const generatePortfolioWithRules = (
       includeCycleDezenas: false,
       repeat1to2: false
     };
+    const poolLabel = subPoolSize < 60
+      ? `Sub-Pool Concentrado ${coverage.distinctNumbers}/${subPoolSize} dezenas`
+      : `${coverage.distinctNumbers}/60 dezenas`;
+
     const games = rawGames.map((numbers, idx) => {
       const validation = validateGameAgainstRules(numbers, cleanLogic, referenceNumbers, analyticsOverride);
       return {
         numbers,
-        reasoning: `Carteira Cobertura Anti-Colisão (#${idx + 1}/${safePortfolioSize}): ${coverage.distinctNumbers}/60 dezenas • ${coverage.uniquePairs}/${coverage.totalPossiblePairs} pares únicos (${coverage.pairCoveragePct.toFixed(1)}%) • 0 jogos repetidos.`,
+        reasoning: `Carteira Cobertura Anti-Colisão (#${idx + 1}/${safePortfolioSize}): ${poolLabel} • ${coverage.uniquePairs}/${coverage.totalPossiblePairs} pares únicos (${coverage.pairCoveragePct.toFixed(1)}%) • 0 jogos repetidos.`,
         passedAllRules: true,
         validation,
         advancedMetrics: buildAdvancedBetMetrics(validation, 'combinatorial_cover')
@@ -691,8 +796,26 @@ export const generatePortfolioWithRules = (
     return { games, coverage };
   }
 
-  // Para estratégias clássicas: impõe unicidade estrita na carteira (sem bilhetes duplicados)
+  // Upgrade 1 & 2 para estratégias clássicas (Etapa 2 mostrou teto ótimo = 8 para M=78 com Cotas Suaves 25%):
+  // 1) Teto máximo rígido por dezena (Math.ceil(avgFreq + 0.05) => Cap=8 em 78 jogos, Gini ~0,023)
+  // 2) Cotas suaves (~25% com regras de viés completas, ~75% com estrutura preservada e sem travas rígidas de dezena)
+  // 3) Desduplicação obrigatória entre bilhetes
   const seenKeys = new Set<string>();
+  const portfolioFreq = new Uint16Array(61);
+  const avgFreq = (safePortfolioSize * quantity) / 60;
+  const maxNumberCap = Math.max(quantity, Math.ceil(avgFreq + 0.05) + (safePortfolioSize <= 10 ? 2 : 0));
+  const strictQuotaLimit = Math.ceil(safePortfolioSize * 0.25);
+
+  const quotaRelaxedLogic: GeneratorLogic = {
+    ...logic,
+    useAdvancedDuques: false,
+    paretoTopSelection: false,
+    preferHistoricalHotNumbers: false,
+    includeCycleDezenas: false,
+    repeat1to2: false,
+    rowAndColDispersion: false
+  };
+
   const games: Array<{
     numbers: number[];
     reasoning: string;
@@ -701,45 +824,64 @@ export const generatePortfolioWithRules = (
     advancedMetrics: AdvancedBetMetrics;
   }> = [];
 
+  const ctx: PortfolioGenerationContext = {
+    freqCounts: portfolioFreq,
+    maxCap: maxNumberCap,
+    avgFreq
+  };
+
   for (let i = 0; i < safePortfolioSize; i++) {
-    let chosen = generateGameWithRules(quantity, logic, referenceNumbers, analyticsOverride);
+    const activeSliceLogic = i < strictQuotaLimit ? logic : quotaRelaxedLogic;
+    let chosen = generateGameWithRules(quantity, activeSliceLogic, referenceNumbers, analyticsOverride, ctx);
     let key = chosen.numbers.join('-');
     let dedupTries = 0;
 
-    while (seenKeys.has(key) && dedupTries < 18) {
+    while (seenKeys.has(key) && dedupTries < 16) {
       dedupTries++;
-      chosen = generateGameWithRules(quantity, logic, referenceNumbers, analyticsOverride);
+      chosen = generateGameWithRules(quantity, activeSliceLogic, referenceNumbers, analyticsOverride, ctx);
       key = chosen.numbers.join('-');
     }
 
     if (seenKeys.has(key)) {
       let mutGuard = 0;
-      while (seenKeys.has(key) && mutGuard < 50) {
+      while (seenKeys.has(key) && mutGuard < 80) {
         mutGuard++;
         const candidateSet = new Set(chosen.numbers);
         const arr = [...chosen.numbers];
-        arr.splice(Math.floor(Math.random() * arr.length), 1);
-        const replacement = Math.floor(Math.random() * 60) + 1;
-        if (!candidateSet.has(replacement)) {
-          arr.push(replacement);
-          const sorted = arr.sort((a, b) => a - b);
-          const newKey = sorted.join('-');
-          if (!seenKeys.has(newKey)) {
-            const validation = validateGameAgainstRules(sorted, logic, referenceNumbers, analyticsOverride);
-            chosen = {
-              numbers: sorted,
-              reasoning: chosen.reasoning + ' (Ajuste anti-duplicata em carteira)',
-              passedAllRules: validation.allActiveRulesPassed,
-              validation,
-              advancedMetrics: buildAdvancedBetMetrics(validation, logic.calculationStrategy || 'balanced')
-            };
-            key = newKey;
-          }
+        // Substitui dezena mais frequente na carteira pela menos frequente ainda livre
+        arr.sort((a, b) => portfolioFreq[b] - portfolioFreq[a]);
+        arr.shift();
+        const avail: number[] = [];
+        for (let r = 1; r <= 60; r++) {
+          if (!candidateSet.has(r) && portfolioFreq[r] < maxNumberCap) avail.push(r);
+        }
+        const replacementPool = avail.length > 0
+          ? avail
+          : Array.from({ length: 60 }, (_, idx) => idx + 1).filter(r => !candidateSet.has(r));
+        replacementPool.sort((a, b) => portfolioFreq[a] - portfolioFreq[b]);
+        const pickLimit = Math.min(8, replacementPool.length);
+        const replacement = replacementPool[Math.floor(Math.random() * pickLimit)];
+        arr.push(replacement);
+        const sorted = arr.sort((a, b) => a - b);
+        const newKey = sorted.join('-');
+        if (!seenKeys.has(newKey)) {
+          const validation = validateGameAgainstRules(sorted, activeSliceLogic, referenceNumbers, analyticsOverride);
+          chosen = {
+            numbers: sorted,
+            reasoning: chosen.reasoning + ' (Ajuste anti-duplicata & equilíbrio em carteira)',
+            passedAllRules: validation.allActiveRulesPassed,
+            validation,
+            advancedMetrics: buildAdvancedBetMetrics(validation, logic.calculationStrategy || 'balanced')
+          };
+          key = newKey;
         }
       }
     }
 
     seenKeys.add(key);
+    chosen.numbers.forEach(n => {
+      portfolioFreq[n]++;
+    });
     games.push(chosen);
   }
 

@@ -12,10 +12,12 @@ import {
   AlertTriangle,
   Sparkles,
   BarChart3,
-  Clock
+  Clock,
+  FileDown
 } from 'lucide-react';
 import { GeneratorLogic, OfficialDrawResult } from '../types';
 import { generatePortfolioWithRules } from '../utils/lotteryRules';
+import { exportProspectiveAuditPdf } from '../utils/comparatorPdfExport';
 import {
   ProspectiveAuditEntry,
   analyzePortfolioCoverage,
@@ -377,6 +379,20 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleExportAuditPdf = () => {
+    const filterLabel =
+      viewFilter === 'real'
+        ? 'Concursos Reais'
+        : viewFilter === 'synthetic'
+        ? 'Benchmark Prospectivo (50 Sorteios)'
+        : 'Todos os Registros';
+    exportProspectiveAuditPdf({
+      entries: visibleEntries,
+      viewFilterLabel: filterLabel,
+      aggregate
+    });
+  };
+
   const inspectedEntry = entries.find(e => e.id === inspectedEntryId) || null;
   const realCount = entries.filter(e => !e.isSyntheticTest && e.officialDraw).length;
 
@@ -545,6 +561,14 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
               >
                 <Download size={14} />
                 <span>Exportar Ledger JSON</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAuditPdf}
+                className="text-xs font-black text-white bg-slate-900 hover:bg-slate-800 px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <FileDown size={14} />
+                <span>Gerar PDF</span>
               </button>
             </div>
           )}

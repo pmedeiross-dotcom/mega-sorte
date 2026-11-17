@@ -178,9 +178,15 @@ export const isTop20Historical = (num: number): boolean => {
 };
 
 /**
- * Avalia o alinhamento histórico oficial de um jogo qualquer
+ * Avalia o alinhamento histórico oficial de um jogo qualquer.
+ * Quando mapas causais customizados são fornecidos (ex: walk-forward / backtesting),
+ * utiliza exclusivamente os dados anteriores ao concurso-alvo sem consultar totais futuros.
  */
-export const evaluateHistoricalAlignment = (numbers: number[]) => {
+export const evaluateHistoricalAlignment = (
+  numbers: number[],
+  customRankingMap?: Record<number, number>,
+  customCounts?: Record<number, number>
+) => {
   if (numbers.length === 0) {
     return {
       averageDraws: 0,
@@ -190,20 +196,27 @@ export const evaluateHistoricalAlignment = (numbers: number[]) => {
     };
   }
 
-  const totalDraws = numbers.reduce((sum, n) => sum + getOfficialDrawCount(n), 0);
+  const getCount = (n: number) =>
+    customCounts ? (customCounts[n] ?? 0) : getOfficialDrawCount(n);
+  const isTop20 = (n: number) =>
+    customRankingMap ? (customRankingMap[n] ?? 60) <= 20 : isTop20Historical(n);
+
+  const totalDraws = numbers.reduce((sum, n) => sum + getCount(n), 0);
   const averageDraws = Math.round(totalDraws / numbers.length);
-  const top20Count = numbers.filter(n => isTop20Historical(n)).length;
+  const top20Count = numbers.filter(n => isTop20(n)).length;
 
   // Pontuação de conformidade com a distribuição histórica (0 a 100)
-  // Média ideal fica entre 305 e 325 sorteios
+  // Média ideal fica entre 305 e 325 sorteios (escala global) ou acima da média causal
   let conformityScore = 70;
-  if (averageDraws >= 310 && averageDraws <= 335) conformityScore += 20;
+  if (!customCounts && averageDraws >= 310 && averageDraws <= 335) conformityScore += 20;
   if (top20Count >= 2 && top20Count <= 4) conformityScore += 10;
 
   return {
     averageDraws,
     top20Count,
     historicalConformityScore: Math.min(conformityScore, 100),
-    description: `${top20Count} dezenas no Top 20 histórico da Mega-Sena (Média de ${averageDraws} sorteios por dezena nos 3.071 concursos).`
+    description: customCounts
+      ? `${top20Count} dezenas no Top 20 causal acumulado (Média de ${averageDraws} sorteios no histórico anterior).`
+      : `${top20Count} dezenas no Top 20 histórico da Mega-Sena (Média de ${averageDraws} sorteios por dezena nos 3.071 concursos).`
   };
 };

@@ -8,6 +8,8 @@ import { buildLotofacilDrawsListWithLatest } from './lotofacilContestsData';
 import { LOTOFACIL_FRAME, LOTOFACIL_PRIMES } from './lotofacilOfficialStats';
 import { MAIS_MILIONARIA_OFFICIAL_DRAWS } from './maisMilionariaContestsData';
 import { isGamePlausible } from './plausibilityFilter';
+import { STRATEGY_LABELS } from './strategyCatalog';
+export { STRATEGY_LABELS };
 
 export interface HistoricalBacktestDraw {
   contest: number;
@@ -72,14 +74,6 @@ export interface CalibrationResult {
   roundLogs: CalibrationRoundLog[];
 }
 
-export const STRATEGY_LABELS: Record<CalculationStrategy, string> = {
-  balanced: 'Padrão Ouro (Multi-Objetivo)',
-  momentum: 'Momentum Recente (Decaimento)',
-  cycle_delay: 'Pressão & Fechamento de Ciclo',
-  cooccurrence: 'Coocorrência & Duques (Lift)',
-  entropy_shannon: 'Máxima Entropia de Shannon',
-  combinatorial_cover: 'Cobertura Combinatória Anti-Colisão'
-};
 
 /**
  * Constrói a lista unificada de concursos históricos (mais recente primeiro) para backtesting.
@@ -321,7 +315,7 @@ export function runBacktestRange(params: {
 
   return {
     lottery,
-    strategyUsed: logic.calculationStrategy || 'balanced',
+    strategyUsed: logic.calculationStrategy || 'combinatorial_cover',
     totalContests: results.length,
     startContest: minC,
     endContest: maxC,
@@ -363,7 +357,7 @@ export function calibrateStrategyAgainstHistory(params: {
   const candidatePresets: Array<{ label: string; strategy: CalculationStrategy; overrides: Partial<GeneratorLogic> }> = [
     {
       label: 'Configuração Atual do Gerador',
-      strategy: baseLogic.calculationStrategy || 'balanced',
+      strategy: baseLogic.calculationStrategy || 'combinatorial_cover',
       overrides: {}
     },
     {
@@ -524,7 +518,7 @@ export function calibrateStrategyAgainstHistory(params: {
     baselineAvgHits,
     bestMaxHits: bestSummary?.maxHits || 0,
     bestAvgHits: bestSummary?.averageHits || 0,
-    bestStrategy: bestLogic.calculationStrategy || 'balanced',
+    bestStrategy: bestLogic.calculationStrategy || 'combinatorial_cover',
     bestLabel,
     bestLogic,
     bestSummary: bestSummary!,

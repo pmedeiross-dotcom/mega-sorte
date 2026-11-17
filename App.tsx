@@ -46,7 +46,7 @@ import {
   Trophy
 } from 'lucide-react';
 import { generateLuckyNumbersWithAI, analyzeBetHistory, generateBatchLuckyNumbersWithAI } from './services/geminiService';
-import { Bet, GeneratorLogic, CalculationStrategy, OfficialDrawResult, LotteryType } from './types';
+import { Bet, GeneratorLogic, OfficialDrawResult, LotteryType } from './types';
 import { 
   validateGameAgainstRules, 
   generateGameWithRules, 
@@ -69,12 +69,12 @@ import {
 import { LOTOFACIL_FREQUENCY_DATA } from './utils/lotofacilOfficialStats';
 import { analyzeGamePlausibility, isGamePlausible } from './utils/plausibilityFilter';
 import { analyzeTernoFilterFromBets, getHistoricalDrawsForBacktest } from './utils/backtestingEngine';
+import { STRATEGY_CATALOG, getStrategyMeta } from './utils/strategyCatalog';
 import NumberBall from './components/NumberBall';
 import BetCard, { PastComparisonSummary, PastContestMatch } from './components/BetCard';
 import FrequencyChart from './components/FrequencyChart';
 import AdvancedAnalyticsView from './components/AdvancedAnalyticsView';
 import LatestOfficialDrawCard from './components/LatestOfficialDrawCard';
-import ProbabilitySimulatorView from './components/ProbabilitySimulatorView';
 import GameComparatorView from './components/GameComparatorView';
 import SequenceAnalyticsView from './components/SequenceAnalyticsView';
 import WheelingSimulatorView from './components/WheelingSimulatorView';
@@ -101,7 +101,7 @@ import {
 import { User } from 'firebase/auth';
 
 const STORAGE_KEY = 'mega_sorte_bets';
-const LOGIC_KEY = 'mega_sorte_logic_v2';
+const LOGIC_KEY = 'mega_sorte_logic_v3';
 
 const App: React.FC = () => {
   // Último Sorteio Oficial da Mega-Sena (Sempre Visível e Integrado)
@@ -150,8 +150,29 @@ const App: React.FC = () => {
   const [isRuleGenerating, setIsRuleGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    'play' | 'simulator' | 'analytics' | 'sequences' | 'wheeling' | 'comparator' | 'coaching' | 'ranking' | 'history' | 'checker'
+    'play' | 'my_games' | 'analytics' | 'wheeling' | 'compare'
   >('play');
+  const [myGamesSubTab, setMyGamesSubTab] = useState<'history' | 'checker' | 'ranking'>('history');
+  const [analyticsSubTab, setAnalyticsSubTab] = useState<'stats' | 'sequences' | 'coaching'>('stats');
+  const [compareSubModeRequest, setCompareSubModeRequest] = useState<{
+    mode: 'direct' | 'simulator' | 'backtesting' | 'prospective';
+    nonce: number;
+  } | undefined>(undefined);
+
+  const openMyGames = (sub: 'history' | 'checker' | 'ranking' = 'history') => {
+    setMyGamesSubTab(sub);
+    setActiveTab('my_games');
+  };
+
+  const openAnalytics = (sub: 'stats' | 'sequences' | 'coaching' = 'stats') => {
+    setAnalyticsSubTab(sub);
+    setActiveTab('analytics');
+  };
+
+  const openCompare = (mode: 'direct' | 'simulator' | 'backtesting' | 'prospective' = 'direct') => {
+    setCompareSubModeRequest({ mode, nonce: Date.now() + Math.random() });
+    setActiveTab('compare');
+  };
   
   // Toast de feedback não intrusivo
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' | 'error' } | null>(null);
@@ -162,13 +183,7 @@ const App: React.FC = () => {
 
   // Lógica de regras estatísticas selecionáveis pelo usuário (inclui Análise Avançada)
   const [logicOptions, setLogicOptions] = useState<GeneratorLogic>(() => {
-    const saved = localStorage.getItem(LOGIC_KEY);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) { /* fallback */ }
-    }
-    return {
+    const defaults: GeneratorLogic = {
       repeat1to2: true,
       balanceEvenOdd: true,
       sum160to240: true,
@@ -185,14 +200,39 @@ const App: React.FC = () => {
       includeCycleDezenas: true,
       multiplesOfThreeBalance: true,
       rowAndColDispersion: true,
-      // Estratégia de Cálculo Matemático
-      calculationStrategy: 'balanced',
+      // Estratégia de Cálculo Matemático (Padrão auditado: Cobertura Anti-Colisão)
+      calculationStrategy: 'combinatorial_cover',
       // Filtro de Plausibilidade Histórica (Centralizar nos clusters de máxima densidade)
-      strictPlausibilityFilter: true
+      strictPlausibilityFilter: true,
+      // Sub-Pool Combinatório opcional (60 = cobertura global padrão)
+      portfolioSubPoolSize: 60
     };
+    const savedV3 = localStorage.getItem(LOGIC_KEY);
+    if (savedV3) {
+      try {
+        return { ...defaults, ...JSON.parse(savedV3) };
+      } catch (e) { /* fallback */ }
+    }
+    const savedV2 = localStorage.getItem('mega_sorte_logic_v2');
+    if (savedV2) {
+      try {
+        const parsed = JSON.parse(savedV2);
+        return {
+          ...defaults,
+          ...parsed,
+          calculationStrategy: 'combinatorial_cover',
+          portfolioSubPoolSize: 60
+        };
+      } catch (e) { /* fallback */ }
+    }
+    return defaults;
   });
 
+  const [generationModeTab, setGenerationModeTab] = useState<'portfolio' | 'single' | 'ai'>('portfolio');
   const [portfolioBatchSize, setPortfolioBatchSize] = useState<number>(78);
+  const [showBoardDetails, setShowBoardDetails] = useState<boolean>(false);
+  const [showExperimentalStrategies, setShowExperimentalStrategies] = useState<boolean>(false);
+  const [showManualRules, setShowManualRules] = useState<boolean>(false);
   const [lastBatchCoverage, setLastBatchCoverage] = useState<{
     totalGames: number;
     distinctGames: number;
@@ -200,6 +240,8 @@ const App: React.FC = () => {
     uniquePairs: number;
     pairCoveragePct: number;
     giniCoefficient: number;
+    maxFreq?: number;
+    subPoolSize?: number;
   } | null>(null);
 
   // Sorteios de referência de conferência independentes para Mega-Sena, +Milionária e Lotofácil
@@ -649,17 +691,22 @@ const App: React.FC = () => {
               advancedMetrics: g.advancedMetrics
             }))
           );
+          const subPoolUsed = logicOptions.calculationStrategy === 'combinatorial_cover'
+            ? (logicOptions.portfolioSubPoolSize ?? 60)
+            : 60;
           setLastBatchCoverage({
             totalGames: coverage.totalGames,
             distinctGames: coverage.distinctGames,
             distinctNumbers: coverage.distinctNumbers,
             uniquePairs: coverage.uniquePairs,
             pairCoveragePct: coverage.pairCoveragePct,
-            giniCoefficient: coverage.giniCoefficient
+            giniCoefficient: coverage.giniCoefficient,
+            maxFreq: coverage.maxFreq,
+            subPoolSize: subPoolUsed
           });
           if (games.length > 0) setSelectedNumbers(games[0].numbers);
           showToast(
-            `Carteira de ${coverage.distinctGames}/${size} jogos distintos salva (${coverage.distinctNumbers}/60 dez. • ${coverage.pairCoveragePct.toFixed(1)}% pares únicos)!`,
+            `Carteira de ${coverage.distinctGames}/${size} jogos distintos salva (${coverage.distinctNumbers}/${subPoolUsed} dez. • máx. ${coverage.maxFreq}x/dez. • ${coverage.pairCoveragePct.toFixed(1)}% pares únicos)!`,
             'success'
           );
         } else {
@@ -791,11 +838,7 @@ const App: React.FC = () => {
           const result = generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
           saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
           setSelectedNumbers(result.numbers);
-          const strategyName = logicOptions.calculationStrategy === 'combinatorial_cover' ? 'Cobertura Anti-Colisão' :
-            logicOptions.calculationStrategy === 'momentum' ? 'Momentum' :
-            logicOptions.calculationStrategy === 'cycle_delay' ? 'Pressão/Ciclo' :
-            logicOptions.calculationStrategy === 'cooccurrence' ? 'Alta Afinidade' :
-            logicOptions.calculationStrategy === 'entropy_shannon' ? 'Máxima Entropia' : 'Padrão Ouro';
+          const strategyName = getStrategyMeta(logicOptions.calculationStrategy).name;
           showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
         }
       } finally {
@@ -887,22 +930,32 @@ const App: React.FC = () => {
         saveBet('ai', game.numbers, game.reasoning, result.groundingUrls);
       });
       showToast(`${result.games.length} jogos gerados integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
-      setActiveTab('history');
+      openMyGames('history');
     } catch (error) {
-      for (let i = 0; i < 5; i++) {
-        if (currentLottery === 'lotofacil') {
-          const game = generateLotofacilWithRules(15, logicOptions, latestLotofacilDraw.numbers);
-          saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
-        } else if (currentLottery === 'maismilionaria') {
-          const game = generateMaisMilionariaGameWithRules(6, logicOptions, latestMaisMilionariaDraw.numbers);
-          saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
-        } else {
-          const game = generateGameWithRules(6, logicOptions, latestOfficialDraw.numbers);
-          saveBet('smart_rules', game.numbers, game.reasoning, undefined, game.advancedMetrics);
+      const seenFallback = new Set<string>();
+      const fallbackBatch: Array<{ type: Bet['type']; numbers: number[]; reasoning?: string; advancedMetrics?: Bet['advancedMetrics'] }> = [];
+      let tries = 0;
+      while (fallbackBatch.length < 5 && tries < 30) {
+        tries++;
+        const game = currentLottery === 'lotofacil'
+          ? generateLotofacilWithRules(15, logicOptions, latestLotofacilDraw.numbers)
+          : currentLottery === 'maismilionaria'
+          ? generateMaisMilionariaGameWithRules(6, logicOptions, latestMaisMilionariaDraw.numbers)
+          : generateGameWithRules(6, logicOptions, latestOfficialDraw.numbers);
+        const key = game.numbers.join('-');
+        if (!seenFallback.has(key)) {
+          seenFallback.add(key);
+          fallbackBatch.push({
+            type: 'smart_rules',
+            numbers: game.numbers,
+            reasoning: game.reasoning,
+            advancedMetrics: game.advancedMetrics
+          });
         }
       }
-      showToast(`5 jogos gerados com sucesso integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
-      setActiveTab('history');
+      saveBetsBatch(fallbackBatch);
+      showToast(`${fallbackBatch.length} jogos únicos gerados com sucesso integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
+      openMyGames('history');
     } finally {
       setIsBatchLoading(false);
     }
@@ -1541,7 +1594,7 @@ const App: React.FC = () => {
               <button 
                 type="button"
                 onClick={() => setActiveTab('play')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'play' 
                     ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
@@ -1553,47 +1606,34 @@ const App: React.FC = () => {
 
               <button 
                 type="button"
-                onClick={() => setActiveTab('simulator')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'simulator' 
+                onClick={() => setActiveTab('my_games')} 
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'my_games' 
                     ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
-                <Calculator size={15} />
-                <span>PROBABILIDADES</span>
+                <Award size={15} />
+                <span>MEUS JOGOS ({filteredHistory.length})</span>
               </button>
 
               <button 
                 type="button"
                 onClick={() => setActiveTab('analytics')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'analytics' 
                     ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <BarChart3 size={15} />
-                <span>ESTATÍSTICAS</span>
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => setActiveTab('sequences')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'sequences' 
-                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
-                    : 'text-slate-700 hover:text-slate-950'
-                }`}
-              >
-                <ArrowRight size={15} />
-                <span>SEQUÊNCIAS</span>
+                <span>ANÁLISES</span>
               </button>
 
               <button 
                 type="button"
                 onClick={() => setActiveTab('wheeling')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'wheeling' 
                     ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
@@ -1605,67 +1645,15 @@ const App: React.FC = () => {
 
               <button 
                 type="button"
-                onClick={() => setActiveTab('comparator')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'comparator' 
+                onClick={() => setActiveTab('compare')} 
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeTab === 'compare' 
                     ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
                     : 'text-slate-700 hover:text-slate-950'
                 }`}
               >
                 <GitCompare size={15} />
-                <span>COMPARADOR</span>
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => setActiveTab('coaching')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'coaching' 
-                    ? 'bg-purple-600 text-white shadow-sm'
-                    : 'text-purple-700 hover:text-purple-950 font-bold'
-                }`}
-              >
-                <BrainCircuit size={15} className="text-purple-500" />
-                <span>IA COACHING</span>
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => setActiveTab('ranking')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'ranking' 
-                    ? 'bg-amber-600 text-white shadow-sm'
-                    : 'text-amber-700 hover:text-amber-950 font-bold'
-                }`}
-              >
-                <Trophy size={15} className="text-amber-500" />
-                <span>RANKING</span>
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => setActiveTab('checker')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'checker' 
-                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
-                    : 'text-slate-700 hover:text-slate-950'
-                }`}
-              >
-                <Award size={15} />
-                <span>CONFERIR</span>
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => setActiveTab('history')} 
-                className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
-                  activeTab === 'history' 
-                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
-                    : 'text-slate-700 hover:text-slate-950'
-                }`}
-              >
-                <History size={15} />
-                <span>HISTÓRICO ({filteredHistory.length})</span>
+                <span>COMPARAR &amp; SIMULAR</span>
               </button>
             </nav>
 
@@ -1781,7 +1769,7 @@ const App: React.FC = () => {
                 handleUpdateLatestDraw(updated);
               }
             }}
-            onSimulateProbability={() => setActiveTab('simulator')}
+            onSimulateProbability={() => openCompare('simulator')}
             onCheckMyBets={() => {
               if (currentLottery === 'maismilionaria') {
                 setMaisMilionariaRefDraw(latestMaisMilionariaDraw.numbers);
@@ -1792,7 +1780,7 @@ const App: React.FC = () => {
                 setMegaRefDraw(latestOfficialDraw.numbers);
                 setTempRefInput(latestOfficialDraw.numbers.join(', '));
               }
-              setActiveTab('checker');
+              openMyGames('checker');
             }}
             isRefreshing={isFetchingDraw}
           />
@@ -2011,7 +1999,7 @@ const App: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Botões de Ação na Cartela */}
+                {/* Botões de Ação Manual da Cartela (Geração centralizada no painel ao lado) */}
                 <div className="flex flex-wrap gap-2.5">
                   <button 
                     type="button"
@@ -2029,64 +2017,92 @@ const App: React.FC = () => {
 
                   <button 
                     type="button"
-                    onClick={handleFillBoardWithRules} 
-                    className={`py-3 px-4 rounded-2xl font-bold active:scale-[0.99] border transition-all flex items-center space-x-1.5 text-xs ${
-                      currentLottery === 'lotofacil'
-                        ? 'bg-purple-100 hover:bg-purple-200 text-purple-900 border-purple-200'
-                        : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border-emerald-200'
-                    }`}
-                    title="Preenche a cartela atendendo às regras ativas"
-                  >
-                    <Zap size={16} className={currentLottery === 'lotofacil' ? 'text-purple-700' : 'text-emerald-700'} />
-                    <span className="hidden sm:inline">Preencher c/ Regras</span>
-                    <span className="sm:hidden">Regras</span>
-                  </button>
-
-                  <button 
-                    type="button"
-                    onClick={generateSurpresinha} 
-                    className="bg-slate-100 text-slate-800 py-3 px-3.5 rounded-2xl font-bold hover:bg-slate-200 active:scale-[0.99] transition-all flex items-center space-x-1.5 text-xs"
-                    title="Gera surpresinha aleatória simples"
-                  >
-                    <Dice5 size={16} />
-                    <span>Surpresinha</span>
-                  </button>
-
-                  <button 
-                    type="button"
                     onClick={() => setSelectedNumbers([])} 
                     disabled={selectedNumbers.length === 0}
-                    className="bg-red-50 text-red-600 px-3.5 py-3 rounded-2xl font-bold hover:bg-red-100 active:scale-[0.99] border border-red-100 disabled:opacity-40 transition-colors"
-                    title="Limpar dezenas"
+                    className="bg-red-50 text-red-600 px-4 py-3 rounded-2xl font-bold hover:bg-red-100 active:scale-[0.99] border border-red-100 disabled:opacity-40 transition-colors flex items-center space-x-1.5 text-xs"
+                    title="Limpar dezenas marcadas na cartela"
                   >
-                    <RotateCcw size={17} />
+                    <RotateCcw size={16} />
+                    <span>Limpar</span>
                   </button>
                 </div>
               </div>
 
-              {/* HUD / Diagnóstico em Tempo Real das Regras Estatísticas */}
-              <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-4 sm:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+              {/* HUD / Diagnóstico em Tempo Real (Resumo Limpo + Raio-X Recolhível) */}
+              <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-4 sm:p-5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2">
                     <Activity size={18} className={currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'} />
-                    <span>Diagnóstico Estatístico ({currentLottery === 'lotofacil' ? 'Lotofácil' : (currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena')})</span>
-                  </h3>
-                  <span className={`text-[11px] font-extrabold px-2.5 py-1 rounded-full border ${
-                    selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)
-                      ? 'bg-slate-100 text-slate-600 border-slate-200' 
-                      : currentValidation.allActiveRulesPassed 
-                        ? (currentLottery === 'lotofacil' ? 'bg-purple-100 text-purple-800 border-purple-300' : 'bg-emerald-100 text-emerald-800 border-emerald-300') 
-                        : 'bg-amber-100 text-amber-800 border-amber-300'
-                  }`}>
-                    {selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)
-                      ? `Selecione ${currentLottery === 'lotofacil' ? '15+' : '6+'} dezenas` 
-                      : currentValidation.allActiveRulesPassed 
-                        ? '100% Aprovado nas Regras Ativas' 
-                        : `${currentValidation.passedRulesCount}/${currentValidation.activeRulesCount} Regras Aprovadas`}
-                  </span>
+                    <h3 className="text-sm font-black text-slate-900">
+                      Resumo Rápido do Jogo
+                    </h3>
+                    <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                      selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)
+                        ? 'bg-slate-100 text-slate-600 border-slate-200' 
+                        : currentValidation.allActiveRulesPassed 
+                          ? (currentLottery === 'lotofacil' ? 'bg-purple-100 text-purple-800 border-purple-300' : 'bg-emerald-100 text-emerald-800 border-emerald-300') 
+                          : 'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}>
+                      {selectedNumbers.length < (currentLottery === 'lotofacil' ? 15 : 6)
+                        ? `Faltam ${(currentLottery === 'lotofacil' ? 15 : 6) - selectedNumbers.length} dez.` 
+                        : `${currentValidation.advancedScore}% • ${currentValidation.passedRulesCount}/${currentValidation.activeRulesCount} regras`}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {selectedNumbers.length >= 4 && (
+                      <button
+                        type="button"
+                        onClick={handleAutoOptimizeSelected}
+                        disabled={isOptimizing}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-[11px] font-black transition-all shadow-xs flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Sparkles size={12} className={isOptimizing ? 'animate-spin' : ''} />
+                        <span>{isOptimizing ? 'Ajustando...' : 'Auto-Otimizar'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowBoardDetails(prev => !prev)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center space-x-1 transition-colors cursor-pointer"
+                    >
+                      <span>{showBoardDetails ? 'Ocultar Raio-X' : 'Raio-X (14 métricas)'}</span>
+                      {showBoardDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                  </div>
                 </div>
 
-                {/* Grade de Verificação das Regras Adaptativa */}
+                {/* Indicadores essenciais sempre visíveis (4 métricas principais) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                    <span className="text-[10px] font-bold uppercase text-slate-500 block">Soma</span>
+                    <span className="text-sm font-black text-slate-900">{currentValidation.sum}</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                    <span className="text-[10px] font-bold uppercase text-slate-500 block">Par / Ímpar</span>
+                    <span className="text-sm font-black text-slate-900">{currentValidation.evenCount}P / {currentValidation.oddCount}I</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                    <span className="text-[10px] font-bold uppercase text-slate-500 block">Consecutivas</span>
+                    <span className="text-sm font-black text-slate-900">Máx. {currentValidation.maxConsecutive}</span>
+                  </div>
+                  <div className={`p-2.5 rounded-xl border ${
+                    currentPlausibility.classification === 'anomala'
+                      ? 'bg-rose-50 border-rose-200 text-rose-900'
+                      : currentPlausibility.classification === 'alta'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-slate-50 border-slate-200/80 text-slate-900'
+                  }`}>
+                    <span className="text-[10px] font-bold uppercase opacity-75 block">Plausibilidade</span>
+                    <span className="text-sm font-black">
+                      {selectedNumbers.length < 3 ? '-' : `${currentPlausibility.plausibilityScore}/100`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Detalhamento completo de 14 cards + Diagnóstico (visível sob demanda) */}
+                {showBoardDetails && (
+                  <div className="pt-2 border-t border-slate-100 space-y-4">
                 {currentLottery === 'lotofacil' ? (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
                     {/* Moldura x Centro */}
@@ -2481,390 +2497,479 @@ const App: React.FC = () => {
                     )}
                   </div>
                 </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Lado Direito: Geradores e Regras Selecionáveis */}
+            {/* Lado Direito: Central Unificada de Geração + Regras Selecionáveis */}
             <div className="lg:col-span-4 space-y-6">
-              {/* Card 1: Motor com IA + Zona de Ouro */}
-              <div className={`rounded-3xl p-5 sm:p-6 text-white shadow-lg relative overflow-hidden ${
-                currentLottery === 'lotofacil'
-                  ? 'bg-gradient-to-br from-purple-800 via-fuchsia-800 to-indigo-950'
-                  : currentLottery === 'maismilionaria'
-                  ? 'bg-gradient-to-br from-amber-800 via-yellow-900 to-slate-900'
-                  : 'bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900'
-              }`}>
-                <div className="relative z-10 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2.5 py-1 bg-white/15 rounded-full text-white">
-                      <Sparkles size={13} className="mr-1 text-yellow-300" /> Inteligência Artificial
-                    </span>
-                    <span className="text-[10px] text-white/80 font-bold">Gemini + Search</span>
-                  </div>
-
-                  <div>
-                    <h3 className="text-lg font-black tracking-tight">
-                      {currentLottery === 'lotofacil'
-                        ? 'Zona de Ouro Lotofácil (180–220)'
-                        : currentLottery === 'maismilionaria'
-                        ? 'Zona de Ouro +Milionária (130–175)'
-                        : 'Gerar na Zona de Ouro (160–240)'}
-                    </h3>
-                    <p className="text-white/80 text-xs leading-relaxed mt-1">
-                      {currentLottery === 'lotofacil' ? (
-                        <>
-                          A IA analisa os 3.350 concursos oficiais da Lotofácil, foca na <strong>Moldura (9–11)</strong>, <strong>Soma (180–220)</strong> e integra as <strong>Repetidas do Concurso #{activeOfficialDraw.contestNumber}</strong> ({activeOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) em 15 dezenas com alta afinidade.
-                        </>
-                      ) : currentLottery === 'maismilionaria' ? (
-                        <>
-                          A IA consulta todos os sorteios oficiais da +Milionária, analisa a <strong>Zona de Ouro (130–175)</strong> e integra o <strong>Concurso #{activeOfficialDraw.contestNumber}</strong> com os 2 Trevos mais prováveis.
-                        </>
-                      ) : (
-                        <>
-                          A IA consulta todos os sorteios oficiais, analisa a densidade da <strong>Zona de Ouro (160–240)</strong> e integra obrigatoriamente o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> ({latestOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) em todas as combinações geradas.
-                        </>
-                      )}
-                    </p>
-                  </div>
-
-                  <button 
-                    type="button"
-                    onClick={generateAI} 
-                    disabled={isLoading || isBatchLoading} 
-                    className={`w-full bg-white py-3.5 px-4 rounded-2xl font-black shadow-md hover:bg-slate-50 active:scale-[0.98] transition-all flex flex-col items-center justify-center disabled:opacity-75 cursor-pointer ${
-                      currentLottery === 'lotofacil'
-                        ? 'text-purple-900'
-                        : currentLottery === 'maismilionaria'
-                        ? 'text-amber-950'
-                        : 'text-emerald-900'
-                    }`}
-                  >
-                    {isLoading ? (
-                      <div className="flex items-center space-x-2 py-1">
-                        <div className={`animate-spin rounded-full h-4 w-4 border-b-2 ${
-                          currentLottery === 'lotofacil' ? 'border-purple-800' : 'border-emerald-800'
-                        }`}></div>
-                        <span className="text-xs font-bold uppercase">{loadingStatus}</span>
+              {/* Bloco Único Centralizado: Central de Geração de Jogos */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                {/* Cabeçalho do Bloco Centralizado */}
+                <div className={`p-4 sm:p-5 text-white ${
+                  currentLottery === 'lotofacil'
+                    ? 'bg-gradient-to-r from-purple-700 to-indigo-800'
+                    : currentLottery === 'maismilionaria'
+                    ? 'bg-gradient-to-r from-amber-700 to-slate-900'
+                    : 'bg-gradient-to-r from-emerald-700 via-emerald-800 to-slate-900'
+                }`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-8 h-8 rounded-xl bg-white/15 flex items-center justify-center">
+                        <Zap size={17} className="text-emerald-200" />
                       </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center space-x-2 text-sm">
-                          <Sparkles size={17} className={currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'} />
-                          <span>
-                            {currentLottery === 'lotofacil'
-                              ? 'GERAR 1 JOGO LOTOFÁCIL COM IA'
-                              : currentLottery === 'maismilionaria'
-                              ? 'GERAR 1 JOGO +MILIONÁRIA COM IA'
-                              : 'GERAR 1 JOGO COM IA'}
-                          </span>
-                        </div>
-                        <span className={`text-[9px] font-bold uppercase mt-0.5 ${
-                          currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'
-                        }`}>
-                          {currentLottery === 'lotofacil' ? '15 dezenas calibradas na moldura & soma' : 'Aplica regras ativas & salva no histórico'}
-                        </span>
-                      </>
-                    )}
-                  </button>
-
-                  <button 
-                    type="button"
-                    onClick={generateBatchAI} 
-                    disabled={isLoading || isBatchLoading} 
-                    className="w-full bg-white/20 hover:bg-white/30 text-white border border-white/25 py-3 px-4 rounded-2xl font-bold transition-all flex items-center justify-center space-x-2 text-xs cursor-pointer disabled:opacity-50"
-                  >
-                    {isBatchLoading ? (
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    ) : (
-                      <>
-                        <Layers size={16} />
-                        <span>
-                          {currentLottery === 'lotofacil'
-                            ? 'COMBO 5 JOGOS LOTOFÁCIL (15 DEZENAS)'
-                            : 'COMBO 5 JOGOS VARIADOS'}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Card 2: Gerador Instantâneo via Regras Locais & Análise Avançada */}
-              <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4 relative overflow-hidden">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-8 h-8 rounded-xl text-white flex items-center justify-center shadow-sm ${
-                      currentLottery === 'lotofacil'
-                        ? 'bg-purple-600'
-                        : currentLottery === 'maismilionaria'
-                        ? 'bg-amber-600'
-                        : 'bg-emerald-600'
-                    }`}>
-                      <Zap size={18} />
+                      <div>
+                        <h3 className="text-sm sm:text-base font-black tracking-tight">Central de Geração de Jogos</h3>
+                        <p className="text-[11px] text-white/80 font-medium">
+                          {currentLottery === 'lotofacil' ? 'Lotofácil' : currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena'} · Base #{activeOfficialDraw.contestNumber}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm font-black text-slate-900 flex items-center space-x-1.5">
-                        <span>Geração Rápida pelas Regras</span>
-                      </h3>
-                      <span className={`text-[10px] font-bold flex items-center space-x-1 ${
-                        currentLottery === 'lotofacil' ? 'text-purple-700' : 'text-emerald-700'
-                      }`}>
-                        <Sparkles size={11} className={currentLottery === 'lotofacil' ? 'text-purple-600' : 'text-emerald-600'} />
-                        <span>
-                          {currentLottery === 'lotofacil'
-                            ? 'Motor Oficial Lotofácil (3.350 Concursos)'
-                            : currentLottery === 'maismilionaria'
-                            ? 'Motor Oficial +Milionária (401 Concursos)'
-                            : 'Motor de Análise Avançada (3.071 Concursos)'}
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                    currentLottery === 'lotofacil'
-                      ? 'text-purple-800 bg-purple-50 border-purple-200'
-                      : 'text-emerald-800 bg-emerald-100/70 border border-emerald-200'
-                  }`}>
-                    Zero Espera
-                  </span>
-                </div>
-
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  {currentLottery === 'lotofacil' ? (
-                    <>
-                      Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{activeOfficialDraw.contestNumber}</strong> (repetição de 8 a 10 dezenas), <strong>Moldura (9 a 11)</strong>, <strong>Primos &amp; Fibonacci</strong> e <strong>Equilíbrio Par/Ímpar (7P/8I ou 8P/7I)</strong> da Lotofácil.
-                    </>
-                  ) : currentLottery === 'maismilionaria' ? (
-                    <>
-                      Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{activeOfficialDraw.contestNumber}</strong> da +Milionária, miolo estatístico e 2 trevos quentes.
-                    </>
-                  ) : (
-                    <>
-                      Gera matematicamente em milissegundos jogos combinando o <strong>Último Concurso #{latestOfficialDraw.contestNumber}</strong> (repetição provável e atraso 0), <strong>Duques Históricos</strong>, <strong>Moldura/Centro</strong>, <strong>Primos &amp; Fibonacci</strong> e <strong>Ciclo Atual</strong> da Mega-Sena.
-                    </>
-                  )}
-                </p>
-
-                {/* Seletor de Estratégia de Cálculo Matemático */}
-                <div className="space-y-2 pt-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center space-x-1">
-                      <span>Estratégia de Cálculo Ativa:</span>
-                    </label>
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                      5 Modelos Matemáticos
+                    <span className="text-[10px] font-black uppercase bg-white/15 px-2 py-0.5 rounded-md">
+                      Todos os Geradores
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {[
-                      { 
-                        id: 'combinatorial_cover', 
-                        label: '🛡️ Cobertura Anti-Colisão', 
-                        sub: 'Recomendado: 60/60 dez., 0 duplicatas',
-                        color: 'from-emerald-700 to-slate-800' 
-                      },
-                      { 
-                        id: 'balanced', 
-                        label: '🎯 Padrão Ouro', 
-                        sub: 'Equilíbrio Bayesiano & Pareto',
-                        color: 'from-emerald-600 to-teal-700' 
-                      },
-                      { 
-                        id: 'momentum', 
-                        label: '🔥 Decaimento & Momentum', 
-                        sub: 'Peso exponencial recente',
-                        color: 'from-orange-600 to-amber-700' 
-                      },
-                      { 
-                        id: 'cycle_delay', 
-                        label: '⏳ Pressão & Ciclo', 
-                        sub: 'Z-Score de atraso crítico',
-                        color: 'from-blue-600 to-cyan-700' 
-                      },
-                      { 
-                        id: 'cooccurrence', 
-                        label: '🔗 Alta Afinidade', 
-                        sub: 'Duques com maior Lift',
-                        color: 'from-indigo-600 to-purple-700' 
-                      },
-                      { 
-                        id: 'entropy_shannon', 
-                        label: '🎲 Máxima Entropia', 
-                        sub: 'Dispersão de Shannon orgânica',
-                        color: 'from-purple-600 to-pink-700' 
-                      }
-                    ].map(strat => {
-                      const isActive = (logicOptions.calculationStrategy || 'balanced') === strat.id;
-                      return (
-                        <button
-                          key={strat.id}
-                          type="button"
-                          onClick={() => setLogicOptions(prev => ({ ...prev, calculationStrategy: strat.id as CalculationStrategy }))}
-                          className={`p-2 rounded-xl text-left border transition-all text-xs cursor-pointer ${
-                            isActive 
-                              ? 'border-emerald-500 bg-emerald-50/80 shadow-sm ring-1 ring-emerald-500' 
-                              : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-black text-[11px] text-slate-900">{strat.label}</span>
-                            {isActive && <Check size={13} className="text-emerald-700 font-bold" />}
-                          </div>
-                          <p className="text-[10px] text-slate-500 leading-tight mt-0.5">{strat.sub}</p>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Parâmetros do Modelo Selecionado */}
-                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[10px] space-y-1 text-slate-600">
-                    {logicOptions.calculationStrategy === 'combinatorial_cover' ? (
-                      <p>
-                        <strong>Modelo Ativo (Auditado):</strong> Otimização Combinatória Anti-Colisão. Elimina jogos repetidos e viés de dezenas quentes, maximizando pares/trincas/quadras únicas e elevando P(&ge;1 Terno) e P(&ge;1 Quadra).
-                      </p>
-                    ) : logicOptions.calculationStrategy === 'momentum' ? (
-                      <p>
-                        <strong>Modelo Ativo:</strong> Decaimento Exponencial Temporal ($w = e^{'{-\\lambda \\Delta t}'}$). Prioriza dezenas com alto momentum nos últimos 50 concursos com multiplicador de 1.85x.
-                      </p>
-                    ) : logicOptions.calculationStrategy === 'cycle_delay' ? (
-                      <p>
-                        <strong>Modelo Ativo:</strong> Z-Score de Atraso Crítico ($Z \ge 1.35$) e fechamento do Ciclo Atual da Mega-Sena. Multiplicador de 2.30x em dezenas com atraso acima da média.
-                      </p>
-                    ) : logicOptions.calculationStrategy === 'cooccurrence' ? (
-                      <p>
-                        <strong>Modelo Ativo:</strong> Matriz de Lift de Afinidade Conjunta ($P(A \cap B)/[P(A) \cdot P(B)] \ge 1.20$). Prioriza duplas e trincas que saem juntas na história.
-                      </p>
-                    ) : logicOptions.calculationStrategy === 'entropy_shannon' ? (
-                      <p>
-                        <strong>Modelo Ativo:</strong> Entropia da Informação de Shannon ($H \ge 2.40$ bits). Espaçamento não-linear para evitar qualquer viés de aglomeração espacial.
-                      </p>
-                    ) : (
-                      <p>
-                        <strong>Modelo Ativo:</strong> Padrão Ouro Multi-Objetivo (Poisson $\mu=183$, Bernoulli $p=0.10$, Paridade 3x3/4x2, Moldura e Centro harmônicos).
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Tags dos pilares integrados na geração rápida */}
-                <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
-                  <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center space-x-1">
-                    <Target size={11} /> <span>Duques Top 10</span>
-                  </span>
-                  <span className="bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded-md flex items-center space-x-1">
-                    <Grid3X3 size={11} /> <span>3 Moldura / 3 Centro</span>
-                  </span>
-                  <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md flex items-center space-x-1">
-                    <Flame size={11} /> <span>Pareto 80/20</span>
-                  </span>
-                  <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md">
-                    Ciclo Ativo
-                  </span>
-                  <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md">
-                    Zona de Ouro
-                  </span>
-                </div>
-
-                <div className="pt-1 space-y-2">
-                  <button 
-                    type="button"
-                    onClick={handleQuickRuleGenerate}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer"
-                  >
-                    <Zap size={16} />
-                    <span>GERAR COM ANÁLISE AVANÇADA</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleFillBoardWithRules}
-                    className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center space-x-1.5 active:scale-[0.99]"
-                  >
-                    <Grid3X3 size={14} className="text-emerald-700" />
-                    <span>Preencher Cartela com Análise Avançada</span>
-                  </button>
-
-                  {/* Gerador de Carteira em Lote Anti-Colisão */}
-                  <div className="pt-2 border-t border-slate-100 space-y-2">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
-                      <span>Gerar Carteira Sem Duplicatas:</span>
-                      <div className="flex items-center gap-1">
-                        {[10, 30, 55, 78].map(sz => (
-                          <button
-                            key={sz}
-                            type="button"
-                            onClick={() => setPortfolioBatchSize(sz)}
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-black border cursor-pointer ${
-                              portfolioBatchSize === sz
-                                ? 'bg-slate-900 text-white border-slate-900'
-                                : 'bg-slate-50 text-slate-700 border-slate-200'
-                            }`}
-                          >
-                            {sz}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
+                  {/* Abas de Modo de Geração em 1 Único Lugar */}
+                  <div className="grid grid-cols-3 gap-1.5 mt-4 p-1 bg-black/20 rounded-xl">
                     <button
                       type="button"
-                      onClick={handleGeneratePortfolioBatch}
-                      disabled={isRuleGenerating}
-                      className="w-full bg-slate-900 hover:bg-slate-800 text-white py-2.5 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                      onClick={() => setGenerationModeTab('portfolio')}
+                      className={`py-2 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center space-x-1 ${
+                        generationModeTab === 'portfolio'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-white/85 hover:bg-white/10'
+                      }`}
                     >
-                      <Layers size={14} className="text-emerald-400" />
-                      <span>GERAR CARTEIRA DE {portfolioBatchSize} JOGOS ÚNICOS</span>
+                      <Layers size={13} />
+                      <span>Carteira</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setGenerationModeTab('single')}
+                      className={`py-2 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center space-x-1 ${
+                        generationModeTab === 'single'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-white/85 hover:bg-white/10'
+                      }`}
+                    >
+                      <Zap size={13} />
+                      <span>1 Jogo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGenerationModeTab('ai')}
+                      className={`py-2 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center space-x-1 ${
+                        generationModeTab === 'ai'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-white/85 hover:bg-white/10'
+                      }`}
+                    >
+                      <Sparkles size={13} />
+                      <span>IA Gemini</span>
+                    </button>
+                  </div>
+                </div>
 
-                    {lastBatchCoverage && (
-                      <div className="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-[10px] text-emerald-950 font-semibold space-y-0.5">
-                        <div className="flex justify-between">
-                          <span>Distintos: <strong>{lastBatchCoverage.distinctGames}/{lastBatchCoverage.totalGames}</strong></span>
-                          <span>Dezenas: <strong>{lastBatchCoverage.distinctNumbers}/60</strong></span>
+                {/* Corpo do Bloco Centralizado */}
+                <div className="p-4 sm:p-5 space-y-4">
+                  {/* Seletor de Estratégia Matemática Simplificado + Modo Especialista Recolhível */}
+                  {generationModeTab !== 'ai' && (() => {
+                    const activeStrategy = logicOptions.calculationStrategy || 'combinatorial_cover';
+                    const isExperimentalActive = ['momentum', 'cycle_delay', 'cooccurrence', 'entropy_shannon'].includes(activeStrategy);
+                    const activeSubPool = logicOptions.portfolioSubPoolSize ?? 60;
+
+                    const comb = (n: number, r: number): number => {
+                      if (r > n || r < 0) return 0;
+                      let num = 1;
+                      let den = 1;
+                      const eff = Math.min(r, n - r);
+                      for (let i = 1; i <= eff; i++) {
+                        num *= n - i + 1;
+                        den *= i;
+                      }
+                      return num / den;
+                    };
+                    const total60 = comb(60, 6);
+                    let pAtLeast3 = 0;
+                    let p6 = 0;
+                    if (activeSubPool >= 60) {
+                      pAtLeast3 = 100;
+                      p6 = 100;
+                    } else {
+                      for (let hit = 3; hit <= 6; hit++) {
+                        pAtLeast3 += (comb(activeSubPool, hit) * comb(60 - activeSubPool, 6 - hit)) / total60;
+                      }
+                      pAtLeast3 *= 100;
+                      p6 = (comb(activeSubPool, 6) / total60) * 100;
+                    }
+
+                    return (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-slate-700">
+                            Estratégia Principal:
+                          </label>
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                            Sem Duplicatas + Teto/Dezena
+                          </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Pares Únicos: <strong>{lastBatchCoverage.uniquePairs} ({lastBatchCoverage.pairCoveragePct.toFixed(1)}%)</strong></span>
-                          <span>Gini: <strong>{lastBatchCoverage.giniCoefficient.toFixed(3)}</strong></span>
+
+                        {/* 2 Estratégias Principais */}
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {(['combinatorial_cover', 'balanced'] as const).map(id => {
+                            const meta = STRATEGY_CATALOG[id];
+                            const isActive = activeStrategy === id;
+                            const label = id === 'combinatorial_cover' ? `🛡️ ${meta.shortName} (Rec.)` : meta.badge;
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() => setLogicOptions(prev => ({ ...prev, calculationStrategy: id }))}
+                                className={`p-2.5 rounded-xl text-left border transition-all text-xs cursor-pointer ${
+                                  isActive
+                                    ? 'border-emerald-500 bg-emerald-50/80 shadow-sm ring-1 ring-emerald-500'
+                                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 text-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-black text-[11px] text-slate-900 truncate">{label}</span>
+                                  {isActive && <Check size={12} className="text-emerald-700 shrink-0" />}
+                                </div>
+                                <p className="text-[10px] text-slate-500 leading-tight mt-0.5 truncate">{meta.description}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Perfil Combinatório Auditado (visível quando Mega-Sena + Carteira + Anti-Colisão) */}
+                        {generationModeTab === 'portfolio' && currentLottery === 'megasena' && activeStrategy === 'combinatorial_cover' && (
+                          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                            <span className="text-[10px] font-bold text-slate-700 block">
+                              Perfil Combinatório (Auditado em 1,05M sorteios):
+                            </span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setLogicOptions(prev => ({ ...prev, strictPlausibilityFilter: true, portfolioSubPoolSize: 60 }))}
+                                className={`px-2 py-1.5 rounded-lg text-left border cursor-pointer transition-all ${
+                                  logicOptions.strictPlausibilityFilter !== false
+                                    ? 'bg-indigo-700 text-white border-indigo-700'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                <span className="text-[10px] font-black block">Plausível (Terno 61,61%)</span>
+                                <span className={`text-[9px] block ${logicOptions.strictPlausibilityFilter !== false ? 'text-indigo-100' : 'text-slate-500'}`}>
+                                  Pares 60,1% · Quadra 3,37%
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setLogicOptions(prev => ({ ...prev, strictPlausibilityFilter: false, portfolioSubPoolSize: 60 }))}
+                                className={`px-2 py-1.5 rounded-lg text-left border cursor-pointer transition-all ${
+                                  logicOptions.strictPlausibilityFilter === false
+                                    ? 'bg-indigo-700 text-white border-indigo-700'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                <span className="text-[10px] font-black block">Cobertura Pura (Quadra 3,42%)</span>
+                                <span className={`text-[9px] block ${logicOptions.strictPlausibilityFilter === false ? 'text-indigo-100' : 'text-slate-500'}`}>
+                                  99,97% quadras · Plaus OFF
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Gaveta Recolhível: Estratégias Experimentais & Sub-Pool */}
+                        <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/60">
+                          <button
+                            type="button"
+                            onClick={() => setShowExperimentalStrategies(prev => !prev)}
+                            className="w-full px-3 py-2 flex items-center justify-between text-[11px] font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <span>Modo Especialista (Outras 4 Estratégias{currentLottery === 'megasena' && generationModeTab === 'portfolio' ? ' + Sub-Pool' : ''})</span>
+                              {(isExperimentalActive || activeSubPool !== 60) && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-black">
+                                  Ativo
+                                </span>
+                              )}
+                            </span>
+                            {showExperimentalStrategies ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+
+                          {showExperimentalStrategies && (
+                            <div className="p-2.5 pt-1 space-y-2.5 border-t border-slate-200/80 bg-white">
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {(['momentum', 'cycle_delay', 'cooccurrence', 'entropy_shannon'] as const).map(id => {
+                                  const meta = STRATEGY_CATALOG[id];
+                                  const isActive = activeStrategy === id;
+                                  return (
+                                    <button
+                                      key={id}
+                                      type="button"
+                                      onClick={() => setLogicOptions(prev => ({ ...prev, calculationStrategy: id }))}
+                                      className={`p-2 rounded-xl text-left border transition-all text-xs cursor-pointer ${
+                                        isActive
+                                          ? 'border-emerald-500 bg-emerald-50/80 shadow-sm ring-1 ring-emerald-500'
+                                          : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 text-slate-700'
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="font-black text-[11px] text-slate-900 truncate">{meta.badge}</span>
+                                        {isActive && <Check size={12} className="text-emerald-700 shrink-0" />}
+                                      </div>
+                                      <p className="text-[10px] text-slate-500 leading-tight mt-0.5 truncate">{meta.description}</p>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {currentLottery === 'megasena' && generationModeTab === 'portfolio' && activeStrategy === 'combinatorial_cover' && (
+                                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-700">
+                                    <span>Sub-Pool de Concentração:</span>
+                                    <span className="text-emerald-700 font-black">
+                                      {activeSubPool === 60 ? '60/60 (Padrão)' : `${activeSubPool}/60 Dez.`}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-5 gap-1">
+                                    {[60, 42, 36, 30, 24].map(k => (
+                                      <button
+                                        key={k}
+                                        type="button"
+                                        onClick={() => setLogicOptions(prev => ({ ...prev, portfolioSubPoolSize: k }))}
+                                        className={`py-1 rounded-lg text-[10px] font-black border cursor-pointer transition-all ${
+                                          activeSubPool === k
+                                            ? 'bg-emerald-700 text-white border-emerald-700'
+                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                        }`}
+                                      >
+                                        {k === 60 ? '60' : k}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {activeSubPool < 60 && (
+                                    <p className="text-[10px] text-slate-600 leading-snug">
+                                      P(&ge;3 no pool) = <strong>{pAtLeast3.toFixed(1)}%</strong> · P(Sena no pool) = <strong>{p6.toFixed(2)}%</strong> (reduz pares totais vs K=60).
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    )}
-                  </div>
+                    );
+                  })()}
+
+                  {/* Aba 1: Carteira Otimizada (Botão Principal de Lote) */}
+                  {generationModeTab === 'portfolio' && (
+                    <div className="space-y-3 pt-1">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                        <span>Quantidade de Jogos Únicos:</span>
+                        <div className="flex items-center gap-1">
+                          {[10, 30, 55, 78].map(sz => (
+                            <button
+                              key={sz}
+                              type="button"
+                              onClick={() => setPortfolioBatchSize(sz)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition-all ${
+                                portfolioBatchSize === sz
+                                  ? 'bg-slate-900 text-white border-slate-900'
+                                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              {sz}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleGeneratePortfolioBatch}
+                        disabled={isRuleGenerating}
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer disabled:opacity-50"
+                      >
+                        <Layers size={16} className="text-emerald-400" />
+                        <span>GERAR CARTEIRA DE {portfolioBatchSize} JOGOS ÚNICOS</span>
+                      </button>
+
+                      {lastBatchCoverage && (
+                        <div className="p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-[10px] text-emerald-950 font-semibold space-y-0.5">
+                          <div className="flex justify-between">
+                            <span>Distintos: <strong>{lastBatchCoverage.distinctGames}/{lastBatchCoverage.totalGames}</strong></span>
+                            <span>Dezenas: <strong>{lastBatchCoverage.distinctNumbers}/{lastBatchCoverage.subPoolSize ?? 60}</strong></span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Pares Únicos: <strong>{lastBatchCoverage.uniquePairs} ({lastBatchCoverage.pairCoveragePct.toFixed(1)}%)</strong></span>
+                            <span>
+                              Gini: <strong>{lastBatchCoverage.giniCoefficient.toFixed(3)}</strong>
+                              {typeof lastBatchCoverage.maxFreq === 'number' ? <> · Máx: <strong>{lastBatchCoverage.maxFreq}x</strong></> : null}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Aba 2: 1 Jogo / Preencher Cartela / Surpresinha */}
+                  {generationModeTab === 'single' && (
+                    <div className="space-y-2.5 pt-1">
+                      <button 
+                        type="button"
+                        onClick={handleQuickRuleGenerate}
+                        disabled={isRuleGenerating}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer disabled:opacity-50"
+                      >
+                        <Zap size={16} />
+                        <span>GERAR E SALVAR 1 JOGO</span>
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={handleFillBoardWithRules}
+                          disabled={isRuleGenerating}
+                          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+                        >
+                          <Grid3X3 size={14} className="text-emerald-700" />
+                          <span>Preencher Cartela</span>
+                        </button>
+
+                        <button 
+                          type="button"
+                          onClick={generateSurpresinha} 
+                          className="bg-slate-100 text-slate-800 py-2.5 px-3 rounded-xl font-bold hover:bg-slate-200 transition-all flex items-center justify-center space-x-1.5 text-xs cursor-pointer"
+                        >
+                          <Dice5 size={15} />
+                          <span>Surpresinha</span>
+                        </button>
+                      </div>
+
+                      <p className="text-[10px] text-slate-500 leading-snug">
+                        “Preencher Cartela” marca as dezenas à esquerda sem salvar ainda; “Gerar e Salvar 1 Jogo” e “Surpresinha” já registram no Histórico.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Aba 3: Geração via Inteligência Artificial (Gemini) */}
+                  {generationModeTab === 'ai' && (
+                    <div className="space-y-3 pt-1">
+                      <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed">
+                        <p className="font-bold text-slate-900 mb-1">
+                          {currentLottery === 'lotofacil'
+                            ? 'Zona de Ouro Lotofácil (180–220)'
+                            : currentLottery === 'maismilionaria'
+                            ? 'Zona de Ouro +Milionária (130–175)'
+                            : 'Zona de Ouro Mega-Sena (160–240)'}
+                        </p>
+                        <p className="text-[11px] text-slate-600">
+                          Consulta o Concurso Oficial <strong>#{activeOfficialDraw.contestNumber}</strong> ({activeOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) e aplica as regras ativas com desduplicação garantida.
+                        </p>
+                      </div>
+
+                      <button 
+                        type="button"
+                        onClick={generateAI} 
+                        disabled={isLoading || isBatchLoading} 
+                        className={`w-full text-white py-3.5 px-4 rounded-2xl font-black shadow-md active:scale-[0.98] transition-all flex items-center justify-center space-x-2 text-xs sm:text-sm disabled:opacity-60 cursor-pointer ${
+                          currentLottery === 'lotofacil'
+                            ? 'bg-purple-700 hover:bg-purple-800'
+                            : currentLottery === 'maismilionaria'
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-emerald-700 hover:bg-emerald-800'
+                        }`}
+                      >
+                        {isLoading ? (
+                          <div className="flex items-center space-x-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                            <span className="text-xs font-bold uppercase">{loadingStatus}</span>
+                          </div>
+                        ) : (
+                          <>
+                            <Sparkles size={16} />
+                            <span>GERAR 1 JOGO COM IA</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button 
+                        type="button"
+                        onClick={generateBatchAI} 
+                        disabled={isLoading || isBatchLoading} 
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 px-4 rounded-2xl font-bold transition-all flex items-center justify-center space-x-2 text-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {isBatchLoading ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        ) : (
+                          <>
+                            <Layers size={15} />
+                            <span>COMBO 5 JOGOS VARIADOS (IA)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Card 3: Regras Estatísticas e Análise Avançada Selecionáveis */}
-              <div className="bg-white rounded-3xl p-5 border border-emerald-100 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-black text-emerald-950 flex items-center space-x-1.5">
-                      <SlidersHorizontal size={17} className="text-emerald-600" />
-                      <span>Regras e Análise Avançada</span>
-                    </h3>
-                    <span className="text-[11px] text-emerald-700 font-semibold">
-                      {activeRulesCount} de 15 regras ativas
-                    </span>
-                  </div>
+              {/* Card 3: Regras Estatísticas e Análise Avançada Selecionáveis (Recolhível) */}
+              <div className="bg-white rounded-3xl p-4 sm:p-5 border border-emerald-100 shadow-sm space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualRules(prev => !prev)}
+                    className="flex items-center gap-2 text-left cursor-pointer flex-1"
+                  >
+                    <SlidersHorizontal size={17} className="text-emerald-600 shrink-0" />
+                    <div>
+                      <h3 className="text-sm font-black text-emerald-950">
+                        Ajustes Finos &amp; Regras Manuais
+                      </h3>
+                      <span className="text-[11px] text-emerald-700 font-semibold">
+                        {activeRulesCount} de 15 regras ativas
+                        {logicOptions.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === currentLottery ? ' · Reforço Terno+ ON' : ''}
+                      </span>
+                    </div>
+                  </button>
 
-                  <div className="flex space-x-1 text-[10px] font-bold">
-                    <button 
+                  <div className="flex items-center gap-2 text-[10px] font-bold">
+                    {showManualRules && (
+                      <div className="flex space-x-1">
+                        <button 
+                          type="button"
+                          onClick={() => toggleAllRules(true)}
+                          className="text-emerald-700 hover:underline px-1.5 py-0.5 cursor-pointer"
+                        >
+                          Todas
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <button 
+                          type="button"
+                          onClick={() => toggleAllRules(false)}
+                          className="text-slate-500 hover:underline px-1.5 py-0.5 cursor-pointer"
+                        >
+                          Nenhuma
+                        </button>
+                      </div>
+                    )}
+                    <button
                       type="button"
-                      onClick={() => toggleAllRules(true)}
-                      className="text-emerald-700 hover:underline px-1.5 py-0.5"
+                      onClick={() => setShowManualRules(prev => !prev)}
+                      className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                     >
-                      Todas
-                    </button>
-                    <span className="text-slate-300">|</span>
-                    <button 
-                      type="button"
-                      onClick={() => toggleAllRules(false)}
-                      className="text-slate-500 hover:underline px-1.5 py-0.5"
-                    >
-                      Nenhuma
+                      <span>{showManualRules ? 'Recolher' : 'Configurar'}</span>
+                      {showManualRules ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                     </button>
                   </div>
                 </div>
 
+                {showManualRules && (
+                  <div className="pt-2 border-t border-slate-100 space-y-4">
                 {/* Subseção: Pilares da Análise Avançada (3.071 Concursos) */}
                 <div className="space-y-2">
                   <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md inline-block">
@@ -3123,7 +3228,7 @@ const App: React.FC = () => {
                           </span>
                           <button
                             type="button"
-                            onClick={() => setActiveTab('comparator')}
+                            onClick={() => openCompare('backtesting')}
                             className="text-[11px] font-black text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
                           >
                             {logicOptions.ternoBoostProfile?.lottery === currentLottery ? 'Recalibrar no Backtesting' : 'Capturar no Backtesting'}
@@ -3142,55 +3247,106 @@ const App: React.FC = () => {
                     </label>
                   </div>
                 </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* Aba do Simulador de Probabilidade Real (Quadra, Quina, Sena) */}
-        {activeTab === 'simulator' && (
-          <ProbabilitySimulatorView
-            savedBets={history.filter(b => !b.lottery || b.lottery === currentLottery)}
-            latestDraw={activeOfficialDraw}
-            lottery={currentLottery}
-            onAddBet={(numbers, type, reasoning) => {
-              saveBet(type, numbers, reasoning);
-              showToast("Aposta complementar adicionada à sua carteira com sucesso!");
-            }}
-            onGoToGenerator={() => setActiveTab('play')}
-          />
-        )}
-
-        {/* Aba de Análise Estatística Avançada (Multi-loterias) */}
+        {/* Aba: Análises Unificadas (Estatísticas Avançadas, Sequências Consecutivas & IA Coaching) */}
         {activeTab === 'analytics' && (
-          <AdvancedAnalyticsView 
-            latestDraw={activeOfficialDraw} 
-            lottery={currentLottery}
-            history={history.filter(b => (b.lottery || 'megasena') === currentLottery)}
-            ternoBoostProfile={
-              logicOptions.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === currentLottery
-                ? logicOptions.ternoBoostProfile
-                : undefined
-            }
-            onDisableTernoBoost={() => {
-              setLogicOptions(prev => ({ ...prev, useTernoStatsBoost: false }));
-              showToast("Reforço por simulações de Terno desativado.", 'info');
-            }}
-            onGoToBacktesting={() => setActiveTab('comparator')}
-          />
-        )}
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl p-2 border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => setAnalyticsSubTab('stats')}
+                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  analyticsSubTab === 'stats'
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-md' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-md' : 'bg-emerald-700 text-white shadow-md'))
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <BarChart3 size={17} />
+                <span>Estatísticas Avançadas</span>
+              </button>
 
-        {/* Aba de Sequências Consecutivas */}
-        {activeTab === 'sequences' && (
-          <SequenceAnalyticsView
-            latestDraw={activeOfficialDraw}
-            lottery={currentLottery}
-            onAddBet={(numbers, type, reasoning) => {
-              saveBet(type as any, numbers, reasoning);
-              showToast("Aposta validada salva na sua carteira com sucesso!", 'success');
-              setActiveTab('history');
-            }}
-          />
+              <button
+                type="button"
+                onClick={() => setAnalyticsSubTab('sequences')}
+                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  analyticsSubTab === 'sequences'
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-md' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-md' : 'bg-emerald-700 text-white shadow-md'))
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <ArrowRight size={17} />
+                <span>Sequências Consecutivas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAnalyticsSubTab('coaching')}
+                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  analyticsSubTab === 'coaching'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-purple-700 hover:bg-purple-50'
+                }`}
+              >
+                <BrainCircuit size={17} />
+                <span>IA Coaching</span>
+              </button>
+            </div>
+
+            {analyticsSubTab === 'stats' && (
+              <AdvancedAnalyticsView 
+                latestDraw={activeOfficialDraw} 
+                lottery={currentLottery}
+                history={history.filter(b => (b.lottery || 'megasena') === currentLottery)}
+                ternoBoostProfile={
+                  logicOptions.useTernoStatsBoost && logicOptions.ternoBoostProfile?.lottery === currentLottery
+                    ? logicOptions.ternoBoostProfile
+                    : undefined
+                }
+                onDisableTernoBoost={() => {
+                  setLogicOptions(prev => ({ ...prev, useTernoStatsBoost: false }));
+                  showToast("Reforço por simulações de Terno desativado.", 'info');
+                }}
+                onGoToBacktesting={() => openCompare('backtesting')}
+              />
+            )}
+
+            {analyticsSubTab === 'sequences' && (
+              <SequenceAnalyticsView
+                latestDraw={activeOfficialDraw}
+                lottery={currentLottery}
+                onAddBet={(numbers, type, reasoning) => {
+                  saveBet(type as any, numbers, reasoning);
+                  showToast("Aposta validada salva na sua carteira com sucesso!", 'success');
+                  openMyGames('history');
+                }}
+              />
+            )}
+
+            {analyticsSubTab === 'coaching' && (
+              <AICoachingPanel 
+                history={history}
+                currentLottery={currentLottery}
+                latestDraw={activeOfficialDraw}
+                onApplyCoachingToGenerator={() => {
+                  setLogicOptions(prev => ({ 
+                    ...prev, 
+                    repeat1to2: true, 
+                    balanceEvenOdd: true, 
+                    sum160to240: true, 
+                    calculationStrategy: 'balanced' 
+                  }));
+                  showToast("Estratégia balanceada do Coach aplicada ao gerador!");
+                }}
+                onNavigateToPlay={() => setActiveTab('play')}
+              />
+            )}
+          </div>
         )}
 
         {/* Aba do Simulador de Fechamentos / Desdobramentos Econômicos */}
@@ -3203,13 +3359,13 @@ const App: React.FC = () => {
                 saveBet('smart_rules', g, reason);
               });
               showToast(`${games.length} jogos do fechamento adicionados à sua carteira com sucesso!`, 'success');
-              setActiveTab('history');
+              openMyGames('history');
             }}
           />
         )}
 
-        {/* Aba do Comparador Direto de Jogos & Backtesting */}
-        {activeTab === 'comparator' && (
+        {/* Aba Unificada: Comparar & Simular (Direta, Probabilidades, Backtesting & Auditoria Prospectiva) */}
+        {activeTab === 'compare' && (
           <GameComparatorView
             savedBets={history.filter(b => !b.lottery || b.lottery === currentLottery)}
             lottery={currentLottery}
@@ -3235,11 +3391,55 @@ const App: React.FC = () => {
               showToast(`${games.length} jogos salvos no seu histórico!`, 'success');
             }}
             onGoToGenerator={() => setActiveTab('play')}
+            requestedSubMode={compareSubModeRequest}
           />
         )}
 
-        {/* Aba 2: Histórico Permanente Completo */}
-        {activeTab === 'history' && (
+        {/* Aba Unificada: Meus Jogos (Histórico Permanente, Conferidor Oficial & Ranking) */}
+        {activeTab === 'my_games' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl p-2 border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => setMyGamesSubTab('history')}
+                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  myGamesSubTab === 'history'
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-md' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-md' : 'bg-emerald-700 text-white shadow-md'))
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <History size={17} />
+                <span>Histórico ({filteredHistory.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMyGamesSubTab('checker')}
+                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  myGamesSubTab === 'checker'
+                    ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-md' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-md' : 'bg-emerald-700 text-white shadow-md'))
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Award size={17} />
+                <span>Conferidor Oficial</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMyGamesSubTab('ranking')}
+                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  myGamesSubTab === 'ranking'
+                    ? 'bg-amber-600 text-white shadow-md'
+                    : 'text-amber-700 hover:bg-amber-50'
+                }`}
+              >
+                <Trophy size={17} />
+                <span>Ranking de Jogos</span>
+              </button>
+            </div>
+
+            {myGamesSubTab === 'history' && (
           <div className="bg-white rounded-3xl shadow-sm border border-emerald-100 p-4 sm:p-6 md:p-8">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-6 border-b border-slate-100 gap-4">
               <div>
@@ -3258,7 +3458,7 @@ const App: React.FC = () => {
               <div className="flex flex-wrap gap-2 items-center">
                 <button 
                   type="button"
-                  onClick={() => setActiveTab('simulator')}
+                  onClick={() => openCompare('simulator')}
                   disabled={history.length === 0}
                   className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-3.5 py-2 rounded-xl text-xs font-black flex items-center space-x-1.5 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition-all shadow-sm"
                   title="Simular a chance real de acerto (Quadra, Quina e Sena) para o próximo sorteio"
@@ -3455,39 +3655,17 @@ const App: React.FC = () => {
               </div>
             )}
           </div>
-        )}
+            )}
 
-        {/* Aba: IA Coaching */}
-        {activeTab === 'coaching' && (
-          <AICoachingPanel 
-            history={history}
-            currentLottery={currentLottery}
-            latestDraw={activeOfficialDraw}
-            onApplyCoachingToGenerator={() => {
-              setLogicOptions(prev => ({ 
-                ...prev, 
-                repeat1to2: true, 
-                balanceEvenOdd: true, 
-                sum160to240: true, 
-                calculationStrategy: 'balanced' 
-              }));
-              showToast("Estratégia balanceada do Coach aplicada ao gerador!");
-            }}
-            onNavigateToPlay={() => setActiveTab('play')}
-          />
-        )}
+            {myGamesSubTab === 'ranking' && (
+              <GameRankingPanel 
+                history={history}
+                currentLottery={currentLottery}
+                onNavigateToPlay={() => setActiveTab('play')}
+              />
+            )}
 
-        {/* Aba: Ranking de Jogos */}
-        {activeTab === 'ranking' && (
-          <GameRankingPanel 
-            history={history}
-            currentLottery={currentLottery}
-            onNavigateToPlay={() => setActiveTab('play')}
-          />
-        )}
-
-        {/* Aba: Conferidor de Apostas (Totalmente compatível com Mega-Sena e +Milionária) */}
-        {activeTab === 'checker' && (
+            {myGamesSubTab === 'checker' && (
           <div className="bg-white rounded-3xl shadow-sm border border-emerald-100 p-4 sm:p-6 md:p-8 space-y-6">
             <div>
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center space-x-2">
@@ -3989,6 +4167,8 @@ const App: React.FC = () => {
                   />
                 ))}
               </div>
+            )}
+          </div>
             )}
           </div>
         )}

@@ -153,16 +153,20 @@ export interface PositionStats {
  * Calcula todas as análises avançadas com base nos sorteios oficiais
  */
 export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
+  const isCustomSubset = Boolean(customDraws && customDraws.length > 0 && customDraws !== RECENT_OFFICIAL_DRAWS);
   const drawsList = customDraws && customDraws.length > 0 ? customDraws : RECENT_OFFICIAL_DRAWS;
   const latestContest = drawsList[0]?.contest || RECENT_OFFICIAL_DRAWS[0].contest;
+  const effectiveContestsCount = isCustomSubset ? drawsList.length : TOTAL_CONTESTS_COUNT;
 
-  // Mapa de atrasos atuais
+  // Mapa de atrasos atuais e contagens estritamente sobre drawsList
   const currentDelays: Record<number, number> = {};
   const lastDrawContest: Record<number, number> = {};
   const lastDrawDate: Record<number, string> = {};
   const countLast10: Record<number, number> = {};
   const countLast25: Record<number, number> = {};
   const countLast50: Record<number, number> = {};
+  const subsetCounts: Record<number, number> = {};
+  const subsetPairCounts = new Map<string, number>();
 
   for (let n = 1; n <= 60; n++) {
     currentDelays[n] = 999;
@@ -171,10 +175,14 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     countLast10[n] = 0;
     countLast25[n] = 0;
     countLast50[n] = 0;
+    subsetCounts[n] = 0;
   }
 
   drawsList.forEach((draw, index) => {
-    draw.numbers.forEach(num => {
+    const nums = draw.numbers;
+    for (let i = 0; i < nums.length; i++) {
+      const num = nums[i];
+      subsetCounts[num] = (subsetCounts[num] || 0) + 1;
       if (currentDelays[num] === 999) {
         currentDelays[num] = latestContest - draw.contest;
         lastDrawContest[num] = draw.contest;
@@ -183,15 +191,26 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
       if (index < 10) countLast10[num]++;
       if (index < 25) countLast25[num]++;
       if (index < 50) countLast50[num]++;
-    });
+
+      if (isCustomSubset) {
+        for (let j = i + 1; j < nums.length; j++) {
+          const a = Math.min(nums[i], nums[j]);
+          const b = Math.max(nums[i], nums[j]);
+          const pk = `${a}-${b}`;
+          subsetPairCounts.set(pk, (subsetPairCounts.get(pk) || 0) + 1);
+        }
+      }
+    }
   });
 
   // Ajusta dezenas que não saíram nos últimos sorteios conhecidos
   for (let n = 1; n <= 60; n++) {
     if (currentDelays[n] === 999) {
-      currentDelays[n] = 60 + Math.floor((60 - n) % 15);
-      lastDrawContest[n] = latestContest - currentDelays[n];
-      lastDrawDate[n] = "Anterior a 2026";
+      currentDelays[n] = isCustomSubset
+        ? drawsList.length
+        : 60 + Math.floor((60 - n) % 15);
+      lastDrawContest[n] = Math.max(0, latestContest - currentDelays[n]);
+      lastDrawDate[n] = isCustomSubset ? "Ausente na janela causal" : "Anterior a 2026";
     }
   }
 
@@ -203,8 +222,8 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
   // 1. Tabela Completa dos 60 Números
   const numbersAnalysis: NumberDetailedAnalysis[] = Array.from({ length: 60 }, (_, i) => {
     const num = i + 1;
-    const totalDraws = OFFICIAL_FREQUENCY_DATA[num] || 300;
-    const frequencyPercentage = parseFloat(((totalDraws / TOTAL_CONTESTS_COUNT) * 100).toFixed(1));
+    const totalDraws = isCustomSubset ? (subsetCounts[num] || 0) : (OFFICIAL_FREQUENCY_DATA[num] || 300);
+    const frequencyPercentage = parseFloat(((totalDraws / Math.max(1, effectiveContestsCount)) * 100).toFixed(1));
     const delay = currentDelays[num];
     const isEven = num % 2 === 0;
     const isPrime = PRIME_NUMBERS.includes(num);
@@ -245,7 +264,9 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
   });
 
   // Ranking 1 a 60
-  const sortedForRank = [...numbersAnalysis].sort((a, b) => b.totalDraws - a.totalDraws);
+  const sortedForRank = [...numbersAnalysis].sort(
+    (a, b) => b.totalDraws - a.totalDraws || b.recentCountLast25 - a.recentCountLast25 || a.number - b.number
+  );
   sortedForRank.forEach((item, idx) => {
     const original = numbersAnalysis.find(n => n.number === item.number);
     if (original) original.ranking = idx + 1;
@@ -426,24 +447,37 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     { range: "> 280", count: 48, percentage: 1.5, status: "Muito Rara" }
   ];
 
-  // 10. Duques da Mega-Sena (Pares de dezenas mais sorteadas juntas em toda a história)
-  const topDuques: MegaDuque[] = [
-    { pair: [10, 53], name: "10 - 53", count: 58, percentage: 1.89 },
-    { pair: [33, 42], name: "33 - 42", count: 55, percentage: 1.79 },
-    { pair: [5, 37], name: "05 - 37", count: 54, percentage: 1.76 },
-    { pair: [10, 34], name: "10 - 34", count: 52, percentage: 1.69 },
-    { pair: [27, 53], name: "27 - 53", count: 51, percentage: 1.66 },
-    { pair: [4, 53], name: "04 - 53", count: 50, percentage: 1.63 },
-    { pair: [23, 38], name: "23 - 38", count: 49, percentage: 1.60 },
-    { pair: [17, 30], name: "17 - 30", count: 49, percentage: 1.60 },
-    { pair: [11, 44], name: "11 - 44", count: 48, percentage: 1.56 },
-    { pair: [28, 56], name: "28 - 56", count: 47, percentage: 1.53 }
-  ];
+  // 10. Duques da Mega-Sena (causais quando customDraws é fornecido; globais caso contrário)
+  const topDuques: MegaDuque[] = isCustomSubset
+    ? Array.from(subsetPairCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([k, count]) => {
+          const [a, b] = k.split('-').map(Number);
+          return {
+            pair: [a, b] as [number, number],
+            name: `${a.toString().padStart(2, '0')} - ${b.toString().padStart(2, '0')}`,
+            count,
+            percentage: parseFloat(((count / Math.max(1, effectiveContestsCount)) * 100).toFixed(2))
+          };
+        })
+    : [
+        { pair: [10, 53], name: "10 - 53", count: 58, percentage: 1.89 },
+        { pair: [33, 42], name: "33 - 42", count: 55, percentage: 1.79 },
+        { pair: [5, 37], name: "05 - 37", count: 54, percentage: 1.76 },
+        { pair: [10, 34], name: "10 - 34", count: 52, percentage: 1.69 },
+        { pair: [27, 53], name: "27 - 53", count: 51, percentage: 1.66 },
+        { pair: [4, 53], name: "04 - 53", count: 50, percentage: 1.63 },
+        { pair: [23, 38], name: "23 - 38", count: 49, percentage: 1.60 },
+        { pair: [17, 30], name: "17 - 30", count: 49, percentage: 1.60 },
+        { pair: [11, 44], name: "11 - 44", count: 48, percentage: 1.56 },
+        { pair: [28, 56], name: "28 - 56", count: 47, percentage: 1.53 }
+      ];
 
   // 11. Princípio de Pareto (Top 20% das dezenas = 12 números)
   const paretoTopNumbers = sortedForRank.slice(0, 12);
   const paretoTotalDraws = paretoTopNumbers.reduce((acc, curr) => acc + curr.totalDraws, 0);
-  const totalAllDrawsCount = TOTAL_CONTESTS_COUNT * 6; // 18.414 números
+  const totalAllDrawsCount = Math.max(1, effectiveContestsCount * 6);
   const paretoShare = parseFloat(((paretoTotalDraws / totalAllDrawsCount) * 100).toFixed(1));
 
   // 12. Dezenas por Linhas (L1 a L6)
@@ -458,7 +492,7 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
       name: `Linha ${row} (${startNum.toString().padStart(2, '0')}–${endNum.toString().padStart(2, '0')})`,
       totalDraws,
       percentage: parseFloat(((totalDraws / totalAllDrawsCount) * 100).toFixed(1)),
-      averagePerDraw: parseFloat((totalDraws / TOTAL_CONTESTS_COUNT).toFixed(2))
+      averagePerDraw: parseFloat((totalDraws / Math.max(1, effectiveContestsCount)).toFixed(2))
     };
   });
 
@@ -474,7 +508,7 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
       digitEnd,
       totalDraws,
       percentage: parseFloat(((totalDraws / totalAllDrawsCount) * 100).toFixed(1)),
-      averagePerDraw: parseFloat((totalDraws / TOTAL_CONTESTS_COUNT).toFixed(2))
+      averagePerDraw: parseFloat((totalDraws / Math.max(1, effectiveContestsCount)).toFixed(2))
     };
   });
 
@@ -544,14 +578,15 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
   // 19. Tabela de Bernoulli (esperado vs real)
   const bernoulliExpectedRate = 6 / 60; // 10%
   const bernoulliTable = numbersAnalysis.map(n => {
-    const realRate = n.totalDraws / TOTAL_CONTESTS_COUNT;
+    const realRate = n.totalDraws / Math.max(1, effectiveContestsCount);
     const diff = realRate - bernoulliExpectedRate;
+    const expectedDraws = Math.round(effectiveContestsCount * bernoulliExpectedRate);
     return {
       number: n.number,
       name: n.name,
       realDraws: n.totalDraws,
-      expectedDraws: Math.round(TOTAL_CONTESTS_COUNT * bernoulliExpectedRate), // 307
-      deviation: n.totalDraws - Math.round(TOTAL_CONTESTS_COUNT * bernoulliExpectedRate),
+      expectedDraws,
+      deviation: n.totalDraws - expectedDraws,
       status: diff > 0.008 ? 'Acima do Esperado (+)' : diff < -0.008 ? 'Abaixo do Esperado (-)' : 'Conforme Modelo'
     };
   });
@@ -689,14 +724,18 @@ export const calculateShannonEntropy = (numbers: number[]): { entropy: number; l
  * 2. Z-Score e Pressão Estatística de Atraso
  * Identifica dezenas cujo atraso atual excede o desvio-padrão esperado na Mega-Sena (μ=9.5, σ=8.8).
  */
-export const calculateDelayStats = (numbers: number[]): { 
+export const calculateDelayStats = (
+  numbers: number[],
+  analyticsOverride?: MegaAnalyticsSnapshot
+): { 
   maxZScore: number; 
   avgZScore: number; 
   hasHighPressure: boolean; 
   highPressureNumbers: number[];
 } => {
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const delayMap = new Map<number, number>();
-  CACHED_ADVANCED_ANALYTICS.numbersAnalysis.forEach(n => delayMap.set(n.number, n.currentDelay));
+  analytics.numbersAnalysis.forEach(n => delayMap.set(n.number, n.currentDelay));
 
   const mu = 9.8;
   const sigma = 8.8;
@@ -726,8 +765,12 @@ export const calculateDelayStats = (numbers: number[]): {
  * 3. Matriz de Coocorrência & Lift de Afinidade
  * Mede se as duplas da aposta saem juntas historicamente mais do que o acaso prevê.
  */
-export const calculateCooccurrenceLift = (numbers: number[]): { avgLift: number; topLiftPair?: [number, number] } => {
+export const calculateCooccurrenceLift = (
+  numbers: number[],
+  analyticsOverride?: MegaAnalyticsSnapshot
+): { avgLift: number; topLiftPair?: [number, number] } => {
   if (numbers.length < 2) return { avgLift: 1.0 };
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const sorted = [...numbers].sort((a, b) => a - b);
   let totalLift = 0;
   let pairCount = 0;
@@ -736,7 +779,7 @@ export const calculateCooccurrenceLift = (numbers: number[]): { avgLift: number;
 
   // Mapa de duques mais frequentes
   const duqueMap = new Map<string, number>();
-  CACHED_ADVANCED_ANALYTICS.topDuques.forEach(d => {
+  analytics.topDuques.forEach(d => {
     const key = `${Math.min(d.pair[0], d.pair[1])}-${Math.max(d.pair[0], d.pair[1])}`;
     duqueMap.set(key, d.count);
   });
@@ -793,7 +836,10 @@ export const calculateChiSquareConformity = (numbers: number[]): number => {
  * 5. Motor de Sugestões de Ajuste em Tempo Real ("Dicas de Ouro do Cálculo")
  * Gera recomendações práticas de engenharia estatística para qualquer seleção de dezenas.
  */
-export const generateSmartDiagnosticSuggestions = (numbers: number[]): {
+export const generateSmartDiagnosticSuggestions = (
+  numbers: number[],
+  analyticsOverride?: MegaAnalyticsSnapshot
+): {
   suggestions: string[];
   strengths: string[];
   healthScore: number;
@@ -806,6 +852,7 @@ export const generateSmartDiagnosticSuggestions = (numbers: number[]): {
     };
   }
 
+  const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const sorted = [...numbers].sort((a, b) => a - b);
   const sum = sorted.reduce((a, b) => a + b, 0);
   const evens = sorted.filter(n => n % 2 === 0).length;
@@ -815,13 +862,13 @@ export const generateSmartDiagnosticSuggestions = (numbers: number[]): {
   const primes = sorted.filter(n => PRIME_NUMBERS.includes(n)).length;
   const fibs = sorted.filter(n => FIBONACCI_NUMBERS.includes(n)).length;
   const mult3 = sorted.filter(n => MULTIPLES_OF_THREE.includes(n)).length;
-  const paretoSet = new Set(CACHED_ADVANCED_ANALYTICS.paretoTopNumbers.map(p => p.number));
+  const paretoSet = new Set(analytics.paretoTopNumbers.map(p => p.number));
   const paretoCount = sorted.filter(n => paretoSet.has(n)).length;
-  const cycleMissing = CACHED_ADVANCED_ANALYTICS.cycleAnalysis.missingNumbers;
+  const cycleMissing = analytics.cycleAnalysis.missingNumbers;
   const cycleCount = sorted.filter(n => cycleMissing.includes(n)).length;
 
   const entropyData = calculateShannonEntropy(sorted);
-  const delayData = calculateDelayStats(sorted);
+  const delayData = calculateDelayStats(sorted, analyticsOverride);
   const chiConformity = calculateChiSquareConformity(sorted);
 
   const suggestions: string[] = [];
@@ -1047,12 +1094,12 @@ export const evaluateAdvancedGameMetrics = (
   const duquesValid = Boolean(matchedDuque);
   const rowColValid = maxInRow <= 2 && maxInCol <= 2;
 
-  // Novos Cálculos Estatísticos
+  // Novos Cálculos Estatísticos (propaga analyticsOverride para evitar vazamento futuro)
   const entropyData = calculateShannonEntropy(sorted);
-  const delayData = calculateDelayStats(sorted);
-  const liftData = calculateCooccurrenceLift(sorted);
+  const delayData = calculateDelayStats(sorted, analyticsOverride);
+  const liftData = calculateCooccurrenceLift(sorted, analyticsOverride);
   const chiConformity = calculateChiSquareConformity(sorted);
-  const smartDiag = generateSmartDiagnosticSuggestions(sorted);
+  const smartDiag = generateSmartDiagnosticSuggestions(sorted, analyticsOverride);
 
   const checks = [
     primesValid,

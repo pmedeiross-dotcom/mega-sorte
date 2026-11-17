@@ -4,6 +4,7 @@ import { Bet } from '../types';
 import NumberBall from './NumberBall';
 import { Trash2, Share2, Calendar, Activity, Calculator, FileDown, Copy, Check, Award, Cloud, History, ChevronDown, ChevronUp, Target } from 'lucide-react';
 import { jsPDF } from 'jspdf';
+import { getStrategyMeta } from '../utils/strategyCatalog';
 
 export interface PastContestMatch {
   contest: number;
@@ -380,12 +381,7 @@ const BetCard: React.FC<BetCardProps> = ({
                 ? 'bg-teal-50 text-teal-900 border-teal-300'
                 : 'bg-emerald-50 text-emerald-900 border-emerald-300'
             }`}>
-              {bet.advancedMetrics.strategyUsed === 'momentum' && '🔥 Momentum'}
-              {bet.advancedMetrics.strategyUsed === 'cycle_delay' && '⏳ Pressão/Ciclo'}
-              {bet.advancedMetrics.strategyUsed === 'cooccurrence' && '🔗 Alta Afinidade'}
-              {bet.advancedMetrics.strategyUsed === 'entropy_shannon' && '🎲 Shannon'}
-              {bet.advancedMetrics.strategyUsed === 'combinatorial_cover' && '🛡️ Cobertura Anti-Colisão'}
-              {bet.advancedMetrics.strategyUsed === 'balanced' && '🎯 Padrão Ouro'}
+              {getStrategyMeta(bet.advancedMetrics.strategyUsed).badge}
             </span>
           )}
           {bet.advancedMetrics.duqueName && (

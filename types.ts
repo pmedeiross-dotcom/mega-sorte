@@ -102,6 +102,8 @@ export interface GeneratorLogic {
   rowAndColDispersion?: boolean;
   // Estratégia de Cálculo Matemático
   calculationStrategy?: CalculationStrategy;
+  // Tamanho do sub-pool de dezenas para carteiras concentradas (60 = Cobertura Global padrão)
+  portfolioSubPoolSize?: number;
   // Filtro de Plausibilidade Histórica (Centralizar nos clusters de máxima densidade)
   strictPlausibilityFilter?: boolean;
   // Reforço Estatístico a partir de Simulações de Backtesting que acertaram Terno (3+ dezenas)
