@@ -14,7 +14,7 @@ import {
   Unsubscribe 
 } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../firebase';
-import { Bet } from '../types';
+import { Bet, LotteryType } from '../types';
 
 export const loginWithGoogle = async (): Promise<User> => {
   try {
@@ -115,9 +115,66 @@ export const deleteBetFromCloud = async (userId: string, betId: string): Promise
   }
 };
 
+function normalizeLottery(raw: unknown): LotteryType {
+  if (typeof raw !== 'string') return 'megasena';
+  const v = raw.toLowerCase().trim();
+  if (v === 'lotofacil' || v === 'loto-facil') return 'lotofacil';
+  if (v === 'maismilionaria' || v === 'mais-milionaria') return 'maismilionaria';
+  return 'megasena';
+}
+
+function normalizeCreatedAt(raw: unknown): number {
+  if (typeof raw === 'number' && !isNaN(raw)) return raw;
+  if (raw && typeof raw === 'object') {
+    const ts = raw as { toMillis?: () => number; seconds?: number };
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  }
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function normalizeCloudBet(docId: string, data: Record<string, any>): Bet {
+  const numbers = Array.isArray(data.numbers)
+    ? data.numbers.map((n: any) => Number(n)).filter((n: number) => !isNaN(n))
+    : [];
+  const computedSum = numbers.reduce((acc: number, n: number) => acc + n, 0);
+
+  return {
+    ...(data as Bet),
+    id: docId,
+    numbers,
+    lottery: normalizeLottery(data.lottery),
+    createdAt: normalizeCreatedAt(data.createdAt),
+    sum: typeof data.sum === 'number' && !isNaN(data.sum) ? data.sum : computedSum,
+    sumStatus: data.sumStatus === 'low' || data.sumStatus === 'high' ? data.sumStatus : 'ideal',
+    type: data.type === 'manual' || data.type === 'random' || data.type === 'ai' ? data.type : 'smart_rules',
+    isCloudSynced: true
+  };
+}
+
+export const fetchCloudBetsOnce = async (userId: string): Promise<Bet[]> => {
+  const path = `users/${userId}/bets`;
+  const betsCollection = collection(db, 'users', userId, 'bets');
+  try {
+    const snapshot = await getDocs(betsCollection);
+    const bets: Bet[] = [];
+    snapshot.forEach((docSnapshot) => {
+      bets.push(normalizeCloudBet(docSnapshot.id, docSnapshot.data() as Record<string, any>));
+    });
+    bets.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return bets;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+};
+
 export const subscribeToCloudBets = (
   userId: string,
-  onUpdate: (bets: Bet[]) => void,
+  onUpdate: (bets: Bet[], meta?: { fromCache: boolean }) => void,
   onError?: (error: Error) => void
 ): Unsubscribe => {
   const path = `users/${userId}/bets`;
@@ -128,17 +185,11 @@ export const subscribeToCloudBets = (
     (snapshot) => {
       const bets: Bet[] = [];
       snapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data() as Bet;
-        bets.push({
-          ...data,
-          lottery: data.lottery || 'megasena',
-          id: docSnapshot.id,
-          isCloudSynced: true
-        });
+        bets.push(normalizeCloudBet(docSnapshot.id, docSnapshot.data() as Record<string, any>));
       });
       // Sort newest first
       bets.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      onUpdate(bets);
+      onUpdate(bets, { fromCache: snapshot.metadata.fromCache });
     },
     (error) => {
       try {
@@ -150,15 +201,29 @@ export const subscribeToCloudBets = (
   );
 };
 
-export const syncAllLocalBetsToCloud = async (userId: string, localBets: Bet[]): Promise<number> => {
+export const syncAllLocalBetsToCloud = async (
+  userId: string,
+  localBets: Bet[],
+  existingCloudIds?: Set<string>
+): Promise<number> => {
+  const betsToUpload = existingCloudIds
+    ? localBets.filter((b) => !existingCloudIds.has(b.id))
+    : localBets;
+
   let syncedCount = 0;
-  for (const bet of localBets) {
-    try {
-      await saveBetToCloud(userId, bet);
-      syncedCount++;
-    } catch (e) {
-      console.warn(`Erro ao sincronizar aposta ${bet.id}:`, e);
-    }
+  const CHUNK_SIZE = 15;
+  for (let i = 0; i < betsToUpload.length; i += CHUNK_SIZE) {
+    const chunk = betsToUpload.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.allSettled(
+      chunk.map((bet) => saveBetToCloud(userId, bet))
+    );
+    results.forEach((res, idx) => {
+      if (res.status === 'fulfilled') {
+        syncedCount++;
+      } else {
+        console.warn(`Erro ao sincronizar aposta ${chunk[idx]?.id}:`, res.reason);
+      }
+    });
   }
   return syncedCount;
 };

@@ -93,6 +93,7 @@ import {
   loginWithGoogle, 
   logoutUser, 
   subscribeToAuth, 
+  fetchCloudBetsOnce,
   saveBetToCloud, 
   deleteBetFromCloud, 
   subscribeToCloudBets, 
@@ -142,7 +143,24 @@ const App: React.FC = () => {
 
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [betCount, setBetCount] = useState<number>(6);
-  const [history, setHistory] = useState<Bet[]>([]);
+  const [history, setHistory] = useState<Bet[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      const backup = offlineCacheManager.getBackupUserBets();
+      if (Array.isArray(backup) && backup.length > 0) {
+        return backup as Bet[];
+      }
+    } catch (e) {
+      console.error("Erro ao carregar histórico:", e);
+    }
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [isBatchLoading, setIsBatchLoading] = useState(false);
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
@@ -300,8 +318,24 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'synced' | 'syncing' | 'error'>('idle');
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [cloudSyncRetryNonce, setCloudSyncRetryNonce] = useState<number>(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const parseCloudErrorMessage = (err: unknown): string => {
+    const raw = err instanceof Error ? err.message : String(err || '');
+    if (raw.includes('Free daily read units') || raw.includes('Quota exceeded') || raw.includes('resource-exhausted')) {
+      return 'Cota diária gratuita do Firestore atingida (será redefinida amanhã).';
+    }
+    if (raw.includes('Missing or insufficient permissions') || raw.includes('permission-denied')) {
+      return 'Permissão negada no Firestore ao carregar apostas. Verifique as regras de segurança.';
+    }
+    if (raw.includes('client is offline') || raw.includes('unavailable')) {
+      return 'Sem conexão com o servidor da nuvem no momento.';
+    }
+    return 'Não foi possível sincronizar com a nuvem. Clique em atualizar para tentar novamente.';
+  };
 
   // Mostrar toast
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -318,49 +352,60 @@ const App: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Carregar histórico inicial do armazenamento local
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch (e) { 
-        console.error("Erro ao carregar histórico:", e); 
-      }
-    }
-  }, []);
-
   // Sincronizar em tempo real com a nuvem quando o usuário estiver autenticado
   useEffect(() => {
     if (!currentUser) {
       setCloudSyncStatus('idle');
+      setCloudSyncError(null);
       return;
     }
+    let active = true;
     setCloudSyncStatus('syncing');
+    setCloudSyncError(null);
+
+    const mergeCloudBets = (cloudBets: Bet[]) => {
+      setHistory(prev => {
+        const map = new Map<string, Bet>();
+        prev.forEach(b => map.set(b.id, b));
+        cloudBets.forEach(b => map.set(b.id, { ...b, isCloudSynced: true }));
+        const merged = Array.from(map.values());
+        merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        return merged;
+      });
+    };
 
     const unsubscribeBets = subscribeToCloudBets(
       currentUser.uid,
-      (cloudBets) => {
-        setHistory(prev => {
-          const map = new Map<string, Bet>();
-          // Mantém apostas locais existentes
-          prev.forEach(b => map.set(b.id, b));
-          // Atualiza e mescla apostas que vieram da nuvem
-          cloudBets.forEach(b => map.set(b.id, { ...b, isCloudSynced: true }));
-          const merged = Array.from(map.values());
-          merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-          return merged;
-        });
-        setCloudSyncStatus('synced');
+      (cloudBets, meta) => {
+        if (!active) return;
+        mergeCloudBets(cloudBets);
+        if (!meta?.fromCache || cloudBets.length > 0) {
+          setCloudSyncStatus('synced');
+          setCloudSyncError(null);
+        }
       },
-      (err) => {
-        console.warn("Erro ao sincronizar apostas na nuvem:", err);
-        setCloudSyncStatus('error');
+      async (err) => {
+        if (!active) return;
+        console.warn("Erro ao sincronizar apostas na nuvem (onSnapshot):", err);
+        try {
+          const fallbackBets = await fetchCloudBetsOnce(currentUser.uid);
+          if (!active) return;
+          mergeCloudBets(fallbackBets);
+          setCloudSyncStatus('synced');
+          setCloudSyncError(null);
+        } catch (fallbackErr) {
+          if (!active) return;
+          setCloudSyncStatus('error');
+          setCloudSyncError(parseCloudErrorMessage(fallbackErr || err));
+        }
       }
     );
 
-    return () => unsubscribeBets();
-  }, [currentUser]);
+    return () => {
+      active = false;
+      unsubscribeBets();
+    };
+  }, [currentUser, cloudSyncRetryNonce]);
 
   // Sincronizar em segundo plano na inicialização para obter o último concurso oficial da Caixa
   useEffect(() => {
@@ -525,13 +570,32 @@ const App: React.FC = () => {
     }
     setIsSyncingCloud(true);
     setCloudSyncStatus('syncing');
+    setCloudSyncError(null);
     try {
-      const count = await syncAllLocalBetsToCloud(currentUser.uid, history);
+      const cloudBets = await fetchCloudBetsOnce(currentUser.uid);
+      const cloudIds = new Set(cloudBets.map(b => b.id));
+
+      setHistory(prev => {
+        const map = new Map<string, Bet>();
+        prev.forEach(b => map.set(b.id, b));
+        cloudBets.forEach(b => map.set(b.id, { ...b, isCloudSynced: true }));
+        const merged = Array.from(map.values());
+        merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        return merged;
+      });
+
+      const uploadedCount = await syncAllLocalBetsToCloud(currentUser.uid, history, cloudIds);
       setCloudSyncStatus('synced');
-      showToast(`${count} aposta(s) sincronizada(s) com a nuvem do Google!`);
+      setCloudSyncRetryNonce(n => n + 1);
+      showToast(
+        `Sincronizado! ${cloudBets.length} jogo(s) na nuvem${uploadedCount > 0 ? ` (${uploadedCount} enviado(s))` : ''}.`,
+        'success'
+      );
     } catch (e) {
+      const msg = parseCloudErrorMessage(e);
       setCloudSyncStatus('error');
-      showToast("Erro ao sincronizar com a nuvem.", 'error');
+      setCloudSyncError(msg);
+      showToast(msg, 'error');
     } finally {
       setIsSyncingCloud(false);
     }
@@ -1214,6 +1278,16 @@ const App: React.FC = () => {
     return result;
   }, [history, currentLottery, filterType, searchTerm, sortOrder, onlyPrizes, activeRefNumbers, activeRefTrevos]);
 
+  const lotteryCounts = useMemo(() => {
+    const counts = { megasena: 0, maismilionaria: 0, lotofacil: 0 };
+    history.forEach(b => {
+      const lot = (b.lottery || 'megasena') as LotteryType;
+      if (lot in counts) counts[lot]++;
+      else counts.megasena++;
+    });
+    return counts;
+  }, [history]);
+
   // Concursos históricos arquivados disponíveis para comparação na aba Conferir
   const pastContestsForChecker = useMemo(
     () => getHistoricalDrawsForBacktest(currentLottery, activeOfficialDraw),
@@ -1607,6 +1681,7 @@ const App: React.FC = () => {
               <button 
                 type="button"
                 onClick={() => setActiveTab('my_games')} 
+                title={history.length > filteredHistory.length ? `${filteredHistory.length} exibidos na modalidade/filtros atuais de ${history.length} jogos salvos no total` : undefined}
                 className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeTab === 'my_games' 
                     ? (currentLottery === 'lotofacil' ? 'bg-purple-600 text-white shadow-sm' : (currentLottery === 'maismilionaria' ? 'bg-amber-600 text-white shadow-sm' : 'bg-emerald-600 text-white shadow-sm'))
@@ -1614,7 +1689,9 @@ const App: React.FC = () => {
                 }`}
               >
                 <Award size={15} />
-                <span>MEUS JOGOS ({filteredHistory.length})</span>
+                <span>
+                  MEUS JOGOS ({filteredHistory.length}{history.length > filteredHistory.length ? `/${history.length}` : ''})
+                </span>
               </button>
 
               <button 
@@ -1660,7 +1737,11 @@ const App: React.FC = () => {
             {/* Widget de Nuvem & Autenticação Google */}
             <div className="flex items-center">
               {currentUser ? (
-                <div className="flex items-center space-x-2 bg-emerald-50/90 border border-emerald-200/90 px-2.5 py-1 rounded-2xl shadow-sm">
+                <div className={`flex items-center space-x-2 px-2.5 py-1 rounded-2xl shadow-sm border ${
+                  cloudSyncStatus === 'error'
+                    ? 'bg-rose-50/90 border-rose-200'
+                    : 'bg-emerald-50/90 border-emerald-200/90'
+                }`}>
                   {currentUser.photoURL ? (
                     <img 
                       src={currentUser.photoURL} 
@@ -1673,13 +1754,36 @@ const App: React.FC = () => {
                     </div>
                   )}
                   
-                  <div className="hidden xl:flex flex-col text-left pr-0.5">
+                  <div
+                    className="hidden xl:flex flex-col text-left pr-0.5"
+                    title={cloudSyncError || undefined}
+                  >
                     <span className="text-[11px] font-bold text-emerald-950 leading-tight truncate max-w-[110px]">
                       {currentUser.displayName || currentUser.email}
                     </span>
-                    <span className="text-[9px] text-emerald-700 flex items-center space-x-1 font-semibold">
-                      <Cloud size={10} className={cloudSyncStatus === 'syncing' ? 'text-amber-500 animate-pulse' : 'text-emerald-600'} />
-                      <span>{cloudSyncStatus === 'syncing' ? 'Sincronizando...' : 'Nuvem Conectada'}</span>
+                    <span className={`text-[9px] flex items-center space-x-1 font-semibold ${
+                      cloudSyncStatus === 'error'
+                        ? 'text-rose-700'
+                        : cloudSyncStatus === 'syncing'
+                        ? 'text-amber-700'
+                        : 'text-emerald-700'
+                    }`}>
+                      <Cloud size={10} className={
+                        cloudSyncStatus === 'error'
+                          ? 'text-rose-600'
+                          : cloudSyncStatus === 'syncing'
+                          ? 'text-amber-500 animate-pulse'
+                          : 'text-emerald-600'
+                      } />
+                      <span>
+                        {cloudSyncStatus === 'syncing'
+                          ? 'Sincronizando...'
+                          : cloudSyncStatus === 'error'
+                          ? 'Erro na Nuvem'
+                          : cloudSyncStatus === 'synced'
+                          ? 'Nuvem Conectada'
+                          : 'Conectando...'}
+                      </span>
                     </span>
                   </div>
 
@@ -1688,7 +1792,7 @@ const App: React.FC = () => {
                     onClick={handleSyncNow}
                     disabled={isSyncingCloud}
                     className="p-1.5 text-emerald-700 hover:text-emerald-950 hover:bg-emerald-200/50 rounded-xl transition-all"
-                    title="Sincronizar apostas na nuvem agora"
+                    title="Baixar e sincronizar apostas da nuvem agora"
                   >
                     <RefreshCw size={13} className={isSyncingCloud ? 'animate-spin' : ''} />
                   </button>
@@ -3507,27 +3611,47 @@ const App: React.FC = () => {
 
             {/* Banner de Sincronização em Nuvem Multi-Navegador */}
             <div className={`rounded-2xl p-4 mb-6 border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
-              currentUser 
+              currentUser && cloudSyncStatus === 'error'
+                ? 'bg-rose-50 border-rose-200'
+                : currentUser 
                 ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200/90' 
                 : 'bg-gradient-to-r from-slate-50 to-emerald-50/40 border-slate-200'
             }`}>
               <div className="flex items-start space-x-3">
-                <div className={`p-2 rounded-xl mt-0.5 ${currentUser ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                <div className={`p-2 rounded-xl mt-0.5 ${
+                  currentUser && cloudSyncStatus === 'error'
+                    ? 'bg-rose-600 text-white'
+                    : currentUser
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-200 text-slate-700'
+                }`}>
                   <Cloud size={18} />
                 </div>
                 <div>
-                  <h4 className="text-xs sm:text-sm font-black text-emerald-950 flex items-center space-x-1.5">
-                    <span>{currentUser ? 'Nuvem Conectada: Apostas Sincronizadas' : 'Acesse suas Apostas em Qualquer Navegador'}</span>
-                    {currentUser && <Check size={14} className="text-emerald-600" />}
+                  <h4 className={`text-xs sm:text-sm font-black flex items-center space-x-1.5 ${
+                    currentUser && cloudSyncStatus === 'error' ? 'text-rose-950' : 'text-emerald-950'
+                  }`}>
+                    <span>
+                      {!currentUser
+                        ? 'Acesse suas Apostas em Qualquer Navegador'
+                        : cloudSyncStatus === 'error'
+                        ? 'Falha ao Carregar Apostas da Nuvem'
+                        : cloudSyncStatus === 'syncing'
+                        ? 'Sincronizando Apostas da Nuvem...'
+                        : 'Nuvem Conectada: Apostas Sincronizadas'}
+                    </span>
+                    {currentUser && cloudSyncStatus === 'synced' && <Check size={14} className="text-emerald-600" />}
                   </h4>
                   <p className="text-[11px] sm:text-xs text-slate-600 mt-0.5 max-w-xl">
-                    {currentUser ? (
-                      <>
-                        Suas apostas estão salvas na nuvem com a conta <strong>{currentUser.email}</strong>. Abra o Mega Sorte em qualquer outro navegador ou celular e suas apostas salvas aparecerão instantaneamente!
-                      </>
-                    ) : (
+                    {!currentUser ? (
                       <>
                         Atualmente suas apostas estão salvas apenas neste navegador. Conecte com o Google para salvar na nuvem e abrir suas apostas salvas em qualquer computador, celular ou navegador!
+                      </>
+                    ) : cloudSyncStatus === 'error' && cloudSyncError ? (
+                      <span className="text-rose-800 font-semibold">{cloudSyncError}</span>
+                    ) : (
+                      <>
+                        Suas apostas estão sincronizadas na conta <strong>{currentUser.email}</strong>. Total salvo: <strong>{history.length}</strong> jogo(s) (Mega-Sena: {lotteryCounts.megasena} • +Milionária: {lotteryCounts.maismilionaria} • Lotofácil: {lotteryCounts.lotofacil}).
                       </>
                     )}
                   </p>
@@ -3623,21 +3747,66 @@ const App: React.FC = () => {
                 <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-3">
                   <ListChecks size={24} />
                 </div>
-                <h3 className="text-sm font-black text-emerald-950">Nenhuma aposta encontrada</h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                <h3 className="text-sm font-black text-emerald-950">Nenhuma aposta exibida nesta visualização</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
                   {history.length === 0 
-                    ? "Monte seu jogo na cartela ou gere combinações com Inteligência Artificial para começar."
-                    : "Nenhum jogo corresponde aos filtros selecionados. Tente redefinir a busca."}
+                    ? (currentUser
+                        ? "Nenhum jogo foi carregado para esta conta ainda. Você pode buscar novamente na nuvem ou gerar novas combinações."
+                        : "Monte seu jogo na cartela ou gere combinações para começar.")
+                    : `Você tem ${history.length} jogo(s) salvos no total (Mega-Sena: ${lotteryCounts.megasena} • +Milionária: ${lotteryCounts.maismilionaria} • Lotofácil: ${lotteryCounts.lotofacil}), mas nenhum corresponde à loteria/filtros selecionados.`}
                 </p>
-                {history.length === 0 && (
-                  <button 
-                    type="button"
-                    onClick={() => setActiveTab('play')}
-                    className="mt-4 px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-colors"
-                  >
-                    Ir para o Gerador
-                  </button>
-                )}
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  {history.length === 0 ? (
+                    <>
+                      {currentUser && (
+                        <button
+                          type="button"
+                          onClick={handleSyncNow}
+                          disabled={isSyncingCloud}
+                          className="px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-800 font-bold text-xs hover:bg-emerald-50 transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <RefreshCw size={13} className={isSyncingCloud ? 'animate-spin' : ''} />
+                          <span>Buscar Jogos da Nuvem</span>
+                        </button>
+                      )}
+                      <button 
+                        type="button"
+                        onClick={() => setActiveTab('play')}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                      >
+                        Ir para o Gerador
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {(filterType !== 'all' || searchTerm.trim() !== '' || onlyPrizes) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFilterType('all');
+                            setSearchTerm('');
+                            setOnlyPrizes(false);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                        >
+                          Limpar Filtros Ativos
+                        </button>
+                      )}
+                      {(['megasena', 'maismilionaria', 'lotofacil'] as const)
+                        .filter(lot => lot !== currentLottery && lotteryCounts[lot] > 0)
+                        .map(lot => (
+                          <button
+                            key={lot}
+                            type="button"
+                            onClick={() => setCurrentLottery(lot)}
+                            className="px-4 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-800 font-bold text-xs hover:bg-emerald-50 transition-colors cursor-pointer"
+                          >
+                            Ver {lotteryCounts[lot]} em {lot === 'megasena' ? 'Mega-Sena' : lot === 'maismilionaria' ? '+Milionária' : 'Lotofácil'}
+                          </button>
+                        ))}
+                    </>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

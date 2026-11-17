@@ -13,7 +13,8 @@ import {
   AlertCircle,
   Shapes,
   BarChart3,
-  History
+  History,
+  TrendingUp
 } from 'lucide-react';
 import { 
   buildDrawsListWithLatest,
@@ -41,6 +42,7 @@ import { MAIS_MILIONARIA_FRAME } from '../utils/maisMilionariaAdvancedAnalytics'
 import { Bet, OfficialDrawResult, LotteryType, TernoBoostProfile } from '../types';
 import { offlineCacheManager } from '../services/offlineCacheManager';
 import FrequencyChart from './FrequencyChart';
+import SumDistributionChart from './SumDistributionChart';
 
 interface AdvancedAnalyticsViewProps {
   latestDraw?: OfficialDrawResult;
@@ -99,7 +101,7 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
 
   // Sub-abas de navegação temática
   const [subTab, setSubTab] = useState<
-    'table' | 'frequency_chart' | 'recent_contests' | 'behavior_cycle' | 'par_impar_repeat' | 'primes_fibo_mult3' | 'board_geometry' | 'duques_pareto' | 'positions_binary'
+    'table' | 'frequency_chart' | 'sum_chart' | 'recent_contests' | 'behavior_cycle' | 'par_impar_repeat' | 'primes_fibo_mult3' | 'board_geometry' | 'duques_pareto' | 'positions_binary'
   >('table');
 
   // Filtros da Tabela Geral com useDeferredValue
@@ -354,6 +356,7 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
         {[
           { id: 'table', label: `Tabela Geral (${maxNum} Números)`, icon: Table },
           { id: 'frequency_chart', label: 'Gráfico de Frequência', icon: BarChart3 },
+          { id: 'sum_chart', label: 'Gráfico das Somas', icon: TrendingUp },
           { id: 'recent_contests', label: 'Histórico dos Concursos', icon: History },
           { id: 'behavior_cycle', label: 'Ciclo & Tendências', icon: Flame },
           { id: 'par_impar_repeat', label: 'Pares, Ímpares & Repetidas', icon: Repeat },
@@ -521,6 +524,16 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
           history={history} 
           referenceDraw={latestDraw?.numbers || []} 
           lottery={lottery} 
+        />
+      )}
+
+      {/* 1B-2. MÓDULO: GRÁFICO DE SOMAS (MENOR -> MAIOR) */}
+      {subTab === 'sum_chart' && (
+        <SumDistributionChart
+          draws={dynamicDraws}
+          history={history}
+          latestDraw={latestDraw}
+          lottery={lottery}
         />
       )}
 
