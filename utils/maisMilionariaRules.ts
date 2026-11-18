@@ -46,14 +46,18 @@ export function validateMaisMilionariaBet(
   trevos: number[] = [1, 2],
   referenceDrawNumbers: number[] = []
 ): MaisMilionariaValidation {
+  const k = Math.max(1, numbers.length);
+  const goldMin = k === 6 ? 120 : Math.round((120 * k) / 6);
+  const goldMax = k === 6 ? 185 : Math.round((185 * k) / 6);
   const sum = numbers.reduce((a, b) => a + b, 0);
-  const sumValid = sum >= 120 && sum <= 185;
+  const sumValid = sum >= goldMin && sum <= goldMax;
 
   const evenCount = numbers.filter(n => n % 2 === 0).length;
   const oddCount = numbers.length - evenCount;
-  const evenOddValid = (evenCount === 3 && oddCount === 3) || 
-                       (evenCount === 4 && oddCount === 2) || 
-                       (evenCount === 2 && oddCount === 4);
+  const maxParityDiff = k % 2 === 0 ? 2 : 3;
+  const evenOddValid = k >= 4
+    ? Math.abs(evenCount - oddCount) <= maxParityDiff
+    : Math.abs(evenCount - oddCount) <= 1;
 
   const prevSet = new Set(referenceDrawNumbers);
   const repeatedCount = numbers.filter(n => prevSet.has(n)).length;
@@ -72,18 +76,22 @@ export function validateMaisMilionariaBet(
   if (sumValid) score += 25;
   if (evenOddValid) score += 25;
   if (repeatValid) score += 15;
-  if (primesCount >= 1 && primesCount <= 3) score += 15;
-  if (frameCount >= 2 && frameCount <= 4) score += 10;
+  if (primesCount >= 1 && primesCount <= (k >= 7 ? 4 : 3)) score += 15;
+  if (frameCount >= 2 && frameCount <= (k >= 7 ? 5 : 4)) score += 10;
   if (historicalHotCount >= 1) score += 10;
 
   const passedAllRules = sumValid && evenOddValid && repeatValid;
 
   const smartSuggestions: string[] = [];
   if (!sumValid) {
-    smartSuggestions.push(sum < 120 ? `Soma (${sum}) baixa. O padrão áureo da +Milionária é de 120 a 185.` : `Soma (${sum}) alta. O padrão áureo é de 120 a 185.`);
+    smartSuggestions.push(
+      sum < goldMin
+        ? `Soma (${sum}) baixa. O padrão áureo da +Milionária para ${k} dezenas é de ${goldMin} a ${goldMax}.`
+        : `Soma (${sum}) alta. O padrão áureo para ${k} dezenas é de ${goldMin} a ${goldMax}.`
+    );
   }
   if (!evenOddValid) {
-    smartSuggestions.push(`Equilíbrio par/ímpar (${evenCount}P/${oddCount}I) fora das faixas mais premiadas (3P/3I ou 4P/2I).`);
+    smartSuggestions.push(`Equilíbrio par/ímpar (${evenCount}P/${oddCount}I) fora das faixas mais equilibradas.`);
   }
   if (repeatedCount > 2) {
     smartSuggestions.push(`Você incluiu ${repeatedCount} dezenas do último concurso. Na história da +Milionária, em 87,3% dos sorteios repetem 0 ou 1.`);
@@ -254,44 +262,57 @@ export function generateMaisMilionariaGameWithRules(
 // Auto-otimização para +Milionária
 export function autoOptimizeMaisMilionariaNumbers(
   currentNumbers: number[],
-  currentTrevos: number[] = [1, 2]
+  currentTrevos: number[] = [1, 2],
+  targetSize?: number
 ): { optimizedNumbers: number[]; optimizedTrevos: number[]; changesMade: string[] } {
-  let numbers = [...currentNumbers].filter(n => n >= 1 && n <= 50);
+  const safeTarget = Math.max(
+    6,
+    Math.min(12, Math.trunc(targetSize ?? (currentNumbers?.length >= 6 ? currentNumbers.length : 6)))
+  );
+  let numbers = Array.from(new Set(currentNumbers.filter(n => n >= 1 && n <= 50)));
   const changesMade: string[] = [];
 
-  // Garante pelo menos 6 dezenas
-  while (numbers.length < 6) {
+  // Garante safeTarget dezenas
+  while (numbers.length < safeTarget) {
     const r = Math.floor(Math.random() * 50) + 1;
     if (!numbers.includes(r)) {
       numbers.push(r);
       changesMade.push(`Adicionada dezena ${r.toString().padStart(2, '0')}`);
     }
   }
+  if (numbers.length > safeTarget) {
+    numbers = numbers.slice(0, safeTarget);
+    changesMade.push(`Limitado às ${safeTarget} dezenas configuradas`);
+  }
 
-  // Ajusta soma para 120 a 185
-  let sum = numbers.reduce((a, b) => a + b, 0);
-  if (sum < 120) {
+  // Ajusta soma para padrão proporcional (120–185 para 6 dezenas)
+  const goldMin = safeTarget === 6 ? 120 : Math.round((120 * safeTarget) / 6);
+  const goldMax = safeTarget === 6 ? 185 : Math.round((185 * safeTarget) / 6);
+  const sum = numbers.reduce((a, b) => a + b, 0);
+  if (sum < goldMin) {
     const smallest = Math.min(...numbers);
-    const replacement = Math.min(50, smallest + (140 - sum));
-    if (!numbers.includes(replacement)) {
+    const replacement = Math.min(50, smallest + (Math.round((goldMin + goldMax) / 2) - sum));
+    if (!numbers.includes(replacement) && replacement >= 1 && replacement <= 50) {
       numbers = numbers.map(n => n === smallest ? replacement : n);
       changesMade.push(`Substituída dezena baixa ${smallest} por ${replacement} para elevar soma.`);
     }
-  } else if (sum > 185) {
+  } else if (sum > goldMax) {
     const largest = Math.max(...numbers);
-    const replacement = Math.max(1, largest - (sum - 160));
-    if (!numbers.includes(replacement)) {
+    const replacement = Math.max(1, largest - (sum - Math.round((goldMin + goldMax) / 2)));
+    if (!numbers.includes(replacement) && replacement >= 1 && replacement <= 50) {
       numbers = numbers.map(n => n === largest ? replacement : n);
       changesMade.push(`Substituída dezena alta ${largest} por ${replacement} para equilibrar soma.`);
     }
   }
 
   // Trevos
-  let trevos = [...currentTrevos].filter(t => t >= 1 && t <= 6);
+  const trevos = [...currentTrevos].filter(t => t >= 1 && t <= 6);
   if (trevos.length < 2) {
     const pool = [1, 2, 3, 4, 5, 6].filter(t => !trevos.includes(t));
-    trevos.push(pool[0]);
-    changesMade.push(`Adicionado Trevo 🍀 ${pool[0]}`);
+    if (pool.length > 0) {
+      trevos.push(pool[0]);
+      changesMade.push(`Adicionado Trevo 🍀 ${pool[0]}`);
+    }
   }
 
   return {

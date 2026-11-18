@@ -190,31 +190,34 @@ export const generateLuckyNumbersWithAI = async (
 export const generateBatchLuckyNumbersWithAI = async (
   logic?: GeneratorLogic,
   latestDraw?: OfficialDrawResult,
-  lottery: LotteryType = 'megasena'
+  lottery: LotteryType = 'megasena',
+  quantity?: number
 ): Promise<AIBatchResponse> => {
   const isLoto = lottery === 'lotofacil';
   const isMais = lottery === 'maismilionaria';
   const maxNumber = isLoto ? 25 : (isMais ? 50 : 60);
-  const targetQuantity = isLoto ? 15 : 6;
+  const minQty = isLoto ? 15 : 6;
+  const maxQty = isLoto ? 20 : (isMais ? 12 : 15);
+  const targetQuantity = Math.max(minQty, Math.min(maxQty, Math.trunc(quantity ?? minQty)));
 
   const ai = getAIClient();
   const logicContext = buildLogicContext(logic);
   const drawContext = buildDrawContext(latestDraw, logic, lottery);
   
   const batchPrompt = isLoto
-    ? `Acesse e analise o histórico oficial completo da Lotofácil (Caixa Econômica Federal). O jogo é de 25 dezenas (1-25) com apostas de 15 dezenas.
+    ? `Acesse e analise o histórico oficial completo da Lotofácil (Caixa Econômica Federal). O jogo é de 25 dezenas (1-25) com apostas de ${targetQuantity} dezenas.
     ${drawContext}
     ${logicContext}
     Instruções de Probabilidade e Estatística para a Lotofácil:
     1. Baseie-se no histórico oficial de mais de 3.350 concursos: Moldura (9 a 11), Pares/Ímpares (7/8 ou 8/7), Soma entre 180 e 220 e Repetidas (8 a 10).
-    2. Gere 5 jogos distintos de exatamente 15 dezenas únicas cada entre 1 e 25.
+    2. Gere 5 jogos distintos de exatamente ${targetQuantity} dezenas únicas cada entre 1 e 25.
     3. Cada jogo deve ter um reasoning curto justificando sua inclusão baseada nas regras selecionadas e na influência do último concurso oficial.`
     : `Acesse e analise o histórico oficial completo de todos os resultados da ${isMais ? '+Milionária' : 'Mega Sena'} realizados pela Caixa.
     ${drawContext}
     ${logicContext}
     Instruções de Probabilidade e Estatística:
     1. Baseie-se na distribuição histórica de todos os concursos.
-    2. Gere 5 jogos distintos de 6 dezenas aplicando as regras obrigatórias.
+    2. Gere 5 jogos distintos de ${targetQuantity} dezenas únicas cada (entre 1 e ${maxNumber}) aplicando as regras obrigatórias.
     3. Cada jogo deve ter um reasoning curto justificando sua inclusão.`;
 
   const response = await ai.models.generateContent({
@@ -271,21 +274,21 @@ export const generateBatchLuckyNumbersWithAI = async (
     console.error("Erro no Gemini Batch, gerando via motor local de regras", error);
     const games = Array.from({ length: 5 }, () => {
       if (isLoto) {
-        const generated = generateLotofacilWithRules(15, logic, latestDraw?.numbers);
+        const generated = generateLotofacilWithRules(targetQuantity, logic, latestDraw?.numbers);
         return {
           numbers: generated.numbers,
           reasoning: generated.reasoning
         };
       }
       if (isMais) {
-        const generated = generateMaisMilionariaGameWithRules(6, logic, latestDraw?.numbers);
+        const generated = generateMaisMilionariaGameWithRules(targetQuantity, logic, latestDraw?.numbers);
         return {
           numbers: generated.numbers,
           reasoning: generated.reasoning
         };
       }
       const generated = generateGameWithRules(
-        6, 
+        targetQuantity, 
         logic || {
           repeat1to2: false,
           balanceEvenOdd: false,

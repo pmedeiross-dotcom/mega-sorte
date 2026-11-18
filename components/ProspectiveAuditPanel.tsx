@@ -47,6 +47,7 @@ import {
   runThreeWayPairedBenchmark,
   ThreeWayBenchmarkReport
 } from '../utils/hybridBenchmarkEngine';
+import { BET_COST_BY_SIZE_MEGA } from '../utils/probabilityEngine';
 
 interface ProspectiveAuditPanelProps {
   logicOptions: GeneratorLogic;
@@ -55,7 +56,6 @@ interface ProspectiveAuditPanelProps {
 }
 
 const STORAGE_KEY = 'mega_sorte_prospective_ledger_v1';
-const MEGA_TICKET_PRICE = 5.0;
 
 type AuditSectionTab = 'prospective' | 'benchmark3way' | 'walkforward';
 type StrategyAuditChoice = 'combinatorial_cover' | 'hybrid_combinatorial' | 'combinatorial_plausible' | 'classic_dedup';
@@ -78,8 +78,11 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
   const [sectionTab, setSectionTab] = useState<AuditSectionTab>('prospective');
   const [targetContest, setTargetContest] = useState<number>(() => (latestOfficialDraw?.contestNumber || 3069) + 1);
   const [ticketCount, setTicketCount] = useState<number>(78);
+  const [auditBetSize, setAuditBetSize] = useState<6 | 7 | 8>(6);
   const [strategyChoice, setStrategyChoice] = useState<StrategyAuditChoice>('hybrid_combinatorial');
   const [seedInput, setSeedInput] = useState<string>(() => String(createExplicitRandomSeed()));
+
+  const activeTicketPrice = BET_COST_BY_SIZE_MEGA[auditBetSize] || 5.0;
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSimulating50, setIsSimulating50] = useState(false);
@@ -116,9 +119,9 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
     return deriveDeterministicSeed({
       contestNumber: targetContest,
       portfolioSize: ticketCount,
-      betSize: 6
+      betSize: auditBetSize
     });
-  }, [seedInput, targetContest, ticketCount]);
+  }, [seedInput, targetContest, ticketCount, auditBetSize]);
 
   const handleCommitPortfolio = async () => {
     setIsGenerating(true);
@@ -128,7 +131,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       const randomSeed = deriveDeterministicSeed({
         contestNumber: targetContest,
         portfolioSize: safeSize,
-        betSize: 6,
+        betSize: auditBetSize,
         salt: commitSeed + 997
       });
 
@@ -138,29 +141,29 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       if (strategyChoice === 'hybrid_combinatorial') {
         const res = generateHybridCoveragePortfolio({
           portfolioSize: safeSize,
-          betSize: 6,
+          betSize: auditBetSize,
           maxNum: 60,
           seed: commitSeed,
           candidatesPerTicket: 320
         });
         optimizedGames = res.games;
-        strategyLabel = `Estratégia Híbrida (Seed ${res.seed})`;
+        strategyLabel = `Estratégia Híbrida (${auditBetSize} dez. · Seed ${res.seed})`;
       } else if (strategyChoice === 'combinatorial_cover') {
         optimizedGames = generateCombinatorialPortfolio(safeSize, {
-          betSize: 6,
+          betSize: auditBetSize,
           maxNum: 60,
           useStructuralPlausibility: false
         });
-        strategyLabel = 'Cobertura Combinatória Pura (Anti-Colisão)';
+        strategyLabel = `Cobertura Combinatória Pura (${auditBetSize} dez.)`;
       } else if (strategyChoice === 'combinatorial_plausible') {
         optimizedGames = generateCombinatorialPortfolio(safeSize, {
-          betSize: 6,
+          betSize: auditBetSize,
           maxNum: 60,
           useStructuralPlausibility: true
         });
-        strategyLabel = 'Cobertura Combinatória + Plausibilidade Estrutural';
+        strategyLabel = `Cobertura + Plausibilidade (${auditBetSize} dez.)`;
       } else {
-        const res = generatePortfolioWithRules(safeSize, 6, {
+        const res = generatePortfolioWithRules(safeSize, auditBetSize, {
           ...logicOptions,
           calculationStrategy:
             logicOptions.calculationStrategy === 'combinatorial_cover' ||
@@ -169,11 +172,11 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
               : logicOptions.calculationStrategy
         }, latestOfficialDraw.numbers);
         optimizedGames = res.games.map(g => g.numbers);
-        strategyLabel = 'Algoritmo Clássico Deduplicado';
+        strategyLabel = `Algoritmo Clássico Deduplicado (${auditBetSize} dez.)`;
       }
 
       const randRng = new SeededRng(randomSeed);
-      const randomBaselineGames = generateRandomDistinctPortfolio(safeSize, 6, 60, () => randRng.next());
+      const randomBaselineGames = generateRandomDistinctPortfolio(safeSize, auditBetSize, 60, () => randRng.next());
       const createdAt = Date.now();
       const commitmentHash = await computeCommitmentHash({
         targetContest,
@@ -195,9 +198,9 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
         randomSeed,
         hashVersion: 2,
         ticketCount: safeSize,
-        betSize: 6,
-        ticketPrice: MEGA_TICKET_PRICE,
-        totalCost: safeSize * MEGA_TICKET_PRICE,
+        betSize: auditBetSize,
+        ticketPrice: activeTicketPrice,
+        totalCost: safeSize * activeTicketPrice,
         optimizedGames,
         randomBaselineGames,
         commitmentHash,
@@ -305,13 +308,13 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
         const iterSeed = deriveDeterministicSeed({
           contestNumber: baseContest + i,
           portfolioSize: safeSize,
-          betSize: 6,
+          betSize: auditBetSize,
           salt: resolvedCommitSeed
         });
         const iterRandSeed = deriveDeterministicSeed({
           contestNumber: baseContest + i,
           portfolioSize: safeSize,
-          betSize: 6,
+          betSize: auditBetSize,
           salt: resolvedCommitSeed + 701
         });
         const usePlausibility = strategyChoice === 'combinatorial_plausible';
@@ -320,7 +323,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
         if (strategyChoice === 'hybrid_combinatorial') {
           optimizedGames = generateHybridCoveragePortfolio({
             portfolioSize: safeSize,
-            betSize: 6,
+            betSize: auditBetSize,
             maxNum: 60,
             seed: iterSeed,
             candidatesPerTicket: 180
@@ -328,13 +331,13 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
         } else if (strategyChoice === 'classic_dedup') {
           optimizedGames = generatePortfolioWithRules(
             safeSize,
-            6,
+            auditBetSize,
             { ...logicOptions, calculationStrategy: 'balanced' },
             latestOfficialDraw.numbers
           ).games.map(g => g.numbers);
         } else {
           optimizedGames = generateCombinatorialPortfolio(safeSize, {
-            betSize: 6,
+            betSize: auditBetSize,
             maxNum: 60,
             useStructuralPlausibility: usePlausibility,
             candidatesPerTicket: 160
@@ -342,7 +345,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
         }
 
         const randRng = new SeededRng(iterRandSeed);
-        const randomBaselineGames = generateRandomDistinctPortfolio(safeSize, 6, 60, () => randRng.next());
+        const randomBaselineGames = generateRandomDistinctPortfolio(safeSize, auditBetSize, 60, () => randRng.next());
         const createdAt = Date.now() + i;
         const cNum = baseContest + i;
         const commitmentHash = await computeCommitmentHash({
@@ -366,20 +369,20 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
           createdAt,
           strategyLabel:
             strategyChoice === 'hybrid_combinatorial'
-              ? `Estratégia Híbrida (Benchmark 50 · Seed ${iterSeed})`
+              ? `Estratégia Híbrida (${auditBetSize} dez. · Seed ${iterSeed})`
               : strategyChoice === 'classic_dedup'
-              ? 'Clássico Deduplicado (Benchmark 50)'
+              ? `Clássico Deduplicado (${auditBetSize} dez.)`
               : usePlausibility
-              ? 'Cobertura + Plausibilidade (Benchmark 50)'
-              : 'Cobertura Combinatória Pura (Benchmark 50)',
+              ? `Cobertura + Plausibilidade (${auditBetSize} dez.)`
+              : `Cobertura Combinatória Pura (${auditBetSize} dez.)`,
           strategyKey: strategyChoice,
           seed: iterSeed,
           randomSeed: iterRandSeed,
           hashVersion: 2,
           ticketCount: safeSize,
-          betSize: 6,
-          ticketPrice: MEGA_TICKET_PRICE,
-          totalCost: safeSize * MEGA_TICKET_PRICE,
+          betSize: auditBetSize,
+          ticketPrice: activeTicketPrice,
+          totalCost: safeSize * activeTicketPrice,
           optimizedGames,
           randomBaselineGames,
           commitmentHash,
@@ -418,7 +421,8 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       const report = await runThreeWayPairedBenchmark({
         simulationsCount: benchmarkCount,
         ticketCount: safeSize,
-        betSize: 6,
+        betSize: auditBetSize,
+        ticketPrice: activeTicketPrice,
         baseSeed: benchmarkSeed,
         candidatesPerTicket: 180,
         onProgress: (done, total) => setBenchmarkProgress({ done, total })
@@ -436,7 +440,8 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
       const safeSize = Math.max(5, Math.min(200, Number(ticketCount) || 78));
       const report = await runChronologicalPortfolioBacktest({
         ticketCount: safeSize,
-        betSize: 6,
+        betSize: auditBetSize,
+        ticketPrice: activeTicketPrice,
         baseSeed: benchmarkSeed,
         candidatesPerTicket: 160,
         latestOfficialDraw,
@@ -682,7 +687,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
                 </p>
               </div>
               <span className="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl">
-                Orçamento: R$ {(ticketCount * MEGA_TICKET_PRICE).toFixed(2).replace('.', ',')} ({ticketCount} jogos)
+                Orçamento: R$ {(ticketCount * activeTicketPrice).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({ticketCount} × {auditBetSize} dez.)
               </span>
             </div>
 
@@ -702,9 +707,9 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
                 </span>
               </div>
 
-              {/* Quantidade de Jogos */}
+              {/* Quantidade de Jogos & Dezenas por Jogo */}
               <div className="space-y-1.5">
-                <label className="text-xs font-black text-slate-700 block">Tamanho da Carteira</label>
+                <label className="text-xs font-black text-slate-700 block">Tamanho da Carteira &amp; Dezenas</label>
                 <div className="flex items-center gap-1.5">
                   <input
                     type="number"
@@ -730,6 +735,23 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+                <div className="flex items-center gap-1 pt-0.5">
+                  <span className="text-[10px] font-bold text-slate-500 mr-1">Dezenas/jogo:</span>
+                  {([6, 7, 8] as const).map(sz => (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => setAuditBetSize(sz)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-black border cursor-pointer transition-colors ${
+                        auditBetSize === sz
+                          ? 'bg-cyan-700 text-white border-cyan-700'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {sz} dez.
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -1313,7 +1335,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
             <div>
               <label className="text-xs font-black text-slate-700 block mb-1">Simulações Pareadas</label>
               <select
@@ -1336,6 +1358,18 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
                 onChange={e => setTicketCount(Math.max(10, Math.min(150, Number(e.target.value) || 78)))}
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-black text-slate-900 bg-slate-50"
               />
+            </div>
+            <div>
+              <label className="text-xs font-black text-slate-700 block mb-1">Dezenas / Jogo</label>
+              <select
+                value={auditBetSize}
+                onChange={e => setAuditBetSize(Number(e.target.value) as 6 | 7 | 8)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-black text-slate-900 bg-slate-50"
+              >
+                <option value={6}>6 dezenas (R$ 5)</option>
+                <option value={7}>7 dezenas (R$ 35)</option>
+                <option value={8}>8 dezenas (R$ 140)</option>
+              </select>
             </div>
             <div>
               <label className="text-xs font-black text-slate-700 block mb-1">Seed Base Reprodutível</label>
@@ -1371,7 +1405,7 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
                 benchmarkReport.comparisons.hybridVsPure,
                 benchmarkReport.comparisons.pureVsRandom
               ]}
-              subtitle={`Seed Base: ${benchmarkReport.baseSeed} • ${benchmarkReport.simulationsCount} simulações × ${benchmarkReport.ticketCount} jogos (Orçamento/grupo: R$ ${benchmarkReport.hybrid.totalCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`}
+              subtitle={`Seed Base: ${benchmarkReport.baseSeed} • ${benchmarkReport.simulationsCount} simulações × ${benchmarkReport.ticketCount} jogos (${benchmarkReport.betSize} dez.) (Orçamento/grupo: R$ ${benchmarkReport.hybrid.totalCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})`}
             />
           )}
         </div>
@@ -1400,10 +1434,10 @@ export const ProspectiveAuditPanel: React.FC<ProspectiveAuditPanelProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
             <div className="text-xs text-slate-700 space-y-1">
               <p>
-                Executa <strong>Híbrida × Cobertura Pura × Aleatória</strong> com <strong>{ticketCount} jogos</strong> por concurso ao longo dos concursos oficiais detalhados disponíveis.
+                Executa <strong>Híbrida × Cobertura Pura × Aleatória</strong> com <strong>{ticketCount} jogos de {auditBetSize} dezenas</strong> por concurso ao longo dos concursos oficiais detalhados disponíveis.
               </p>
               <p className="text-[11px] text-slate-500">
-                Seed Base: <span className="font-mono font-bold">{benchmarkSeed}</span> • Custo por concurso: R$ {(ticketCount * MEGA_TICKET_PRICE).toFixed(2).replace('.', ',')}
+                Seed Base: <span className="font-mono font-bold">{benchmarkSeed}</span> • Custo por concurso: R$ {(ticketCount * activeTicketPrice).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
             </div>
             <button

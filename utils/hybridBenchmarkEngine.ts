@@ -605,6 +605,7 @@ export async function runThreeWayPairedBenchmark(options?: {
 export async function runChronologicalPortfolioBacktest(options?: {
   ticketCount?: number;
   betSize?: number;
+  ticketPrice?: number;
   baseSeed?: number;
   maxContests?: number;
   candidatesPerTicket?: number;
@@ -613,7 +614,7 @@ export async function runChronologicalPortfolioBacktest(options?: {
 }): Promise<ChronologicalBacktestReport> {
   const ticketCount = Math.max(5, Math.min(200, Math.trunc(options?.ticketCount ?? 78)));
   const betSize = Math.max(6, Math.min(10, Math.trunc(options?.betSize ?? 6)));
-  const ticketPrice = 5.0;
+  const ticketPrice = options?.ticketPrice ?? 5.0;
   const candidatesPerTicket = options?.candidatesPerTicket ?? 180;
   const baseSeed =
     options?.baseSeed ??

@@ -56,7 +56,8 @@ import {
   buildAdvancedBetMetrics, 
   autoOptimizeGameNumbers 
 } from './utils/lotteryRules';
-import { generateMaisMilionariaGameWithRules } from './utils/maisMilionariaRules';
+import { generateMaisMilionariaGameWithRules, autoOptimizeMaisMilionariaNumbers } from './utils/maisMilionariaRules';
+import { BET_COST_BY_SIZE_MEGA, BET_COST_BY_SIZE_LOTOFACIL, combinations } from './utils/probabilityEngine';
 import { LATEST_MAIS_MILIONARIA_DRAW } from './utils/maisMilionariaContestsData';
 import { buildDrawsListWithLatest } from './utils/megaSenaAdvancedAnalytics';
 import { buildMaisMilionariaDrawsListWithLatest } from './utils/maisMilionariaAdvancedAnalytics';
@@ -307,7 +308,8 @@ const App: React.FC = () => {
   // Filtros de histórico
   const [filterType, setFilterType] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'sum_desc' | 'sum_asc'>('newest');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'hits_desc' | 'hits_best_past' | 'hits_asc' | 'sum_desc' | 'sum_asc'>('newest');
+  const [historyMinHits, setHistoryMinHits] = useState<'all' | '1plus' | '2plus' | '3plus' | '4plus' | '5plus' | '11plus' | '12plus' | '13plus' | '14plus'>('all');
   const [onlyPrizes, setOnlyPrizes] = useState<boolean>(false);
   const [checkerHitsFilter, setCheckerHitsFilter] = useState<
     'all' | '3plus' | '3' | '4' | '5' | '6' | '11plus' | '11' | '12' | '13' | '14' | '15'
@@ -316,6 +318,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     setCheckerHitsFilter('all');
+    setHistoryMinHits('all');
     setIsCyclingHighlights(false);
     setSelectedCheckerContest(
       currentLottery === 'lotofacil'
@@ -617,14 +620,15 @@ const App: React.FC = () => {
 
   const calculateSumData = (nums: number[]) => {
     const sum = nums.reduce((a, b) => a + b, 0);
-    let minIdeal = logicOptions.sum160to240 ? 160 : 150;
-    let maxIdeal = logicOptions.sum160to240 ? 240 : 210;
+    const scale = nums.length > 6 ? nums.length / 6 : 1;
+    let minIdeal = Math.round((logicOptions.sum160to240 ? 160 : 150) * scale);
+    let maxIdeal = Math.round((logicOptions.sum160to240 ? 240 : 210) * scale);
     if (currentLottery === 'lotofacil') {
       minIdeal = 180;
       maxIdeal = 220;
     } else if (currentLottery === 'maismilionaria') {
-      minIdeal = 120;
-      maxIdeal = 185;
+      minIdeal = Math.round(120 * scale);
+      maxIdeal = Math.round(185 * scale);
     }
     
     let sumStatus: Bet['sumStatus'] = 'ideal';
@@ -865,11 +869,22 @@ const App: React.FC = () => {
           setSelectedNumbers(optimizedNumbers);
           setBetCount(optimizedNumbers.length);
           showToast(`Lotofácil auto-otimizada com sucesso (${changesMade.length} ajustes na Moldura e Paridade)!`, 'success');
+        } else if (currentLottery === 'maismilionaria') {
+          const { optimizedNumbers, optimizedTrevos, changesMade } = autoOptimizeMaisMilionariaNumbers(
+            selectedNumbers,
+            selectedTrevos,
+            betCount
+          );
+          setSelectedNumbers(optimizedNumbers);
+          setSelectedTrevos(optimizedTrevos);
+          setBetCount(optimizedNumbers.length);
+          showToast(`+Milionária (${optimizedNumbers.length} dez.) auto-otimizada (${changesMade.length} ajustes)!`, 'success');
         } else {
-          const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers);
+          const target = Math.max(6, betCount);
+          const { optimizedNumbers, changesMade } = autoOptimizeGameNumbers(selectedNumbers, target);
           setSelectedNumbers(optimizedNumbers);
           setBetCount(optimizedNumbers.length);
-          showToast(`Jogo auto-otimizado com sucesso (${changesMade.length} ajustes)!`, 'success');
+          showToast(`Jogo de ${optimizedNumbers.length} dezenas auto-otimizado (${changesMade.length} ajustes)!`, 'success');
         }
       } finally {
         setIsOptimizing(false);
@@ -924,7 +939,7 @@ const App: React.FC = () => {
           saveBet('smart_rules', result.numbers, result.reasoning, undefined, result.advancedMetrics);
           setSelectedNumbers(result.numbers);
           const strategyName = getStrategyMeta(logicOptions.calculationStrategy).name;
-          showToast(`Jogo gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
+          showToast(`Jogo de ${result.numbers.length} dezenas gerado via [${strategyName}] integrando o Concurso #${latestOfficialDraw.contestNumber}!`, 'success');
         }
       } finally {
         setIsRuleGenerating(false);
@@ -1010,11 +1025,11 @@ const App: React.FC = () => {
   const generateBatchAI = async () => {
     setIsBatchLoading(true);
     try {
-      const result = await generateBatchLuckyNumbersWithAI(logicOptions, activeOfficialDraw, currentLottery);
+      const result = await generateBatchLuckyNumbersWithAI(logicOptions, activeOfficialDraw, currentLottery, betCount);
       result.games.forEach(game => {
         saveBet('ai', game.numbers, game.reasoning, result.groundingUrls);
       });
-      showToast(`${result.games.length} jogos gerados integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
+      showToast(`${result.games.length} jogos de ${betCount} dezenas gerados integrando o Concurso #${activeOfficialDraw.contestNumber}!`);
       openMyGames('history');
     } catch (error) {
       const seenFallback = new Set<string>();
@@ -1023,10 +1038,10 @@ const App: React.FC = () => {
       while (fallbackBatch.length < 5 && tries < 30) {
         tries++;
         const game = currentLottery === 'lotofacil'
-          ? generateLotofacilWithRules(15, logicOptions, latestLotofacilDraw.numbers)
+          ? generateLotofacilWithRules(betCount, logicOptions, latestLotofacilDraw.numbers)
           : currentLottery === 'maismilionaria'
-          ? generateMaisMilionariaGameWithRules(6, logicOptions, latestMaisMilionariaDraw.numbers)
-          : generateGameWithRules(6, logicOptions, latestOfficialDraw.numbers);
+          ? generateMaisMilionariaGameWithRules(betCount, logicOptions, latestMaisMilionariaDraw.numbers)
+          : generateGameWithRules(betCount, logicOptions, latestOfficialDraw.numbers);
         const key = game.numbers.join('-');
         if (!seenFallback.has(key)) {
           seenFallback.add(key);
@@ -1257,48 +1272,6 @@ const App: React.FC = () => {
     return { sena, quina, quadra, terno, total: relevantBets.length };
   }, [history, currentLottery, activeRefNumbers, activeRefTrevos]);
 
-  // Histórico filtrado e ordenado para a modalidade atual
-  const filteredHistory = useMemo(() => {
-    let result = history.filter(b => (b.lottery || 'megasena') === currentLottery);
-
-    if (filterType !== 'all') {
-      result = result.filter(b => b.type === filterType);
-    }
-
-    if (searchTerm.trim()) {
-      const searchNum = parseInt(searchTerm.trim(), 10);
-      if (!isNaN(searchNum)) {
-        result = result.filter(b => b.numbers.includes(searchNum));
-      }
-    }
-
-    if (onlyPrizes && activeRefNumbers.length > 0) {
-      result = result.filter(b => {
-        const hits = b.numbers.filter(n => activeRefNumbers.includes(n)).length;
-        if (currentLottery === 'lotofacil') {
-          return hits >= 11;
-        }
-        if (currentLottery === 'maismilionaria') {
-          const tHits = (activeRefTrevos && b.trevos) 
-            ? b.trevos.filter(t => activeRefTrevos.includes(t)).length 
-            : 0;
-          return hits >= 4 || (hits === 3 && tHits >= 1) || (hits === 2 && tHits >= 1);
-        }
-        return hits >= 4;
-      });
-    }
-
-    result.sort((a, b) => {
-      if (sortOrder === 'newest') return b.createdAt - a.createdAt;
-      if (sortOrder === 'oldest') return a.createdAt - b.createdAt;
-      if (sortOrder === 'sum_desc') return b.sum - a.sum;
-      if (sortOrder === 'sum_asc') return a.sum - b.sum;
-      return 0;
-    });
-
-    return result;
-  }, [history, currentLottery, filterType, searchTerm, sortOrder, onlyPrizes, activeRefNumbers, activeRefTrevos]);
-
   const lotteryCounts = useMemo(() => {
     const counts = { megasena: 0, maismilionaria: 0, lotofacil: 0 };
     history.forEach(b => {
@@ -1458,6 +1431,137 @@ const App: React.FC = () => {
       totalBets: relevantBets.length
     };
   }, [history, currentLottery, pastContestsForChecker]);
+
+  // Histórico filtrado e ordenado para a modalidade atual (inclui organização por maior nº de acertos)
+  const historyHitsCounts = useMemo(() => {
+    const refSet = new Set(activeRefNumbers);
+    let base = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+    if (filterType !== 'all') {
+      base = base.filter(b => b.type === filterType);
+    }
+    if (searchTerm.trim()) {
+      const searchNum = parseInt(searchTerm.trim(), 10);
+      if (!isNaN(searchNum)) {
+        base = base.filter(b => b.numbers.includes(searchNum));
+      }
+    }
+
+    const useBestPast = sortOrder === 'hits_best_past';
+    const counts = {
+      total: base.length,
+      plus1: 0,
+      plus2: 0,
+      plus3: 0,
+      plus4: 0,
+      plus5: 0,
+      plus11: 0,
+      plus12: 0,
+      plus13: 0,
+      plus14: 0
+    };
+
+    base.forEach(bet => {
+      const hits = useBestPast
+        ? (betPastComparisons.map.get(bet.id)?.bestMatch?.hits ?? 0)
+        : bet.numbers.filter(n => refSet.has(n)).length;
+      if (hits >= 1) counts.plus1++;
+      if (hits >= 2) counts.plus2++;
+      if (hits >= 3) counts.plus3++;
+      if (hits >= 4) counts.plus4++;
+      if (hits >= 5) counts.plus5++;
+      if (hits >= 11) counts.plus11++;
+      if (hits >= 12) counts.plus12++;
+      if (hits >= 13) counts.plus13++;
+      if (hits >= 14) counts.plus14++;
+    });
+
+    return counts;
+  }, [history, currentLottery, filterType, searchTerm, sortOrder, activeRefNumbers, betPastComparisons]);
+
+  const filteredHistory = useMemo(() => {
+    const refSet = new Set(activeRefNumbers);
+    const trevoRefSet = activeRefTrevos ? new Set(activeRefTrevos) : null;
+
+    let result = history.filter(b => (b.lottery || 'megasena') === currentLottery);
+
+    if (filterType !== 'all') {
+      result = result.filter(b => b.type === filterType);
+    }
+
+    if (searchTerm.trim()) {
+      const searchNum = parseInt(searchTerm.trim(), 10);
+      if (!isNaN(searchNum)) {
+        result = result.filter(b => b.numbers.includes(searchNum));
+      }
+    }
+
+    const getCurrentHits = (bet: Bet) => bet.numbers.filter(n => refSet.has(n)).length;
+    const getCurrentTrevoHits = (bet: Bet) =>
+      currentLottery === 'maismilionaria' && trevoRefSet && bet.trevos
+        ? bet.trevos.filter(t => trevoRefSet.has(t)).length
+        : 0;
+    const getBestPastHits = (bet: Bet) => betPastComparisons.map.get(bet.id)?.bestMatch?.hits ?? 0;
+    const getBestPastTrevoHits = (bet: Bet) => betPastComparisons.map.get(bet.id)?.bestMatch?.trevosHits ?? 0;
+
+    if (historyMinHits !== 'all') {
+      const minRequired = parseInt(historyMinHits, 10);
+      if (!isNaN(minRequired)) {
+        result = result.filter(bet => {
+          const score = sortOrder === 'hits_best_past' ? getBestPastHits(bet) : getCurrentHits(bet);
+          return score >= minRequired;
+        });
+      }
+    }
+
+    if (onlyPrizes && activeRefNumbers.length > 0) {
+      result = result.filter(b => {
+        const hits = getCurrentHits(b);
+        if (currentLottery === 'lotofacil') {
+          return hits >= 11;
+        }
+        if (currentLottery === 'maismilionaria') {
+          const tHits = getCurrentTrevoHits(b);
+          return hits >= 4 || (hits === 3 && tHits >= 1) || (hits === 2 && tHits >= 1);
+        }
+        return hits >= 4;
+      });
+    }
+
+    result.sort((a, b) => {
+      if (sortOrder === 'hits_desc') {
+        const hitsDiff = getCurrentHits(b) - getCurrentHits(a);
+        if (hitsDiff !== 0) return hitsDiff;
+        const trevoDiff = getCurrentTrevoHits(b) - getCurrentTrevoHits(a);
+        if (trevoDiff !== 0) return trevoDiff;
+        const pastDiff = getBestPastHits(b) - getBestPastHits(a);
+        if (pastDiff !== 0) return pastDiff;
+        return b.createdAt - a.createdAt;
+      }
+      if (sortOrder === 'hits_best_past') {
+        const pastDiff = getBestPastHits(b) - getBestPastHits(a);
+        if (pastDiff !== 0) return pastDiff;
+        const pastTrevoDiff = getBestPastTrevoHits(b) - getBestPastTrevoHits(a);
+        if (pastTrevoDiff !== 0) return pastTrevoDiff;
+        const currentDiff = getCurrentHits(b) - getCurrentHits(a);
+        if (currentDiff !== 0) return currentDiff;
+        return b.createdAt - a.createdAt;
+      }
+      if (sortOrder === 'hits_asc') {
+        const hitsDiff = getCurrentHits(a) - getCurrentHits(b);
+        if (hitsDiff !== 0) return hitsDiff;
+        const trevoDiff = getCurrentTrevoHits(a) - getCurrentTrevoHits(b);
+        if (trevoDiff !== 0) return trevoDiff;
+        return b.createdAt - a.createdAt;
+      }
+      if (sortOrder === 'newest') return b.createdAt - a.createdAt;
+      if (sortOrder === 'oldest') return a.createdAt - b.createdAt;
+      if (sortOrder === 'sum_desc') return b.sum - a.sum;
+      if (sortOrder === 'sum_asc') return a.sum - b.sum;
+      return 0;
+    });
+
+    return result;
+  }, [history, currentLottery, filterType, searchTerm, sortOrder, historyMinHits, onlyPrizes, activeRefNumbers, activeRefTrevos, betPastComparisons]);
 
   // Contagens por faixa exata de acertos e listagem ordenada exclusiva da aba Conferir
   const checkerHitCounts = useMemo(() => {
@@ -2364,7 +2468,12 @@ const App: React.FC = () => {
                       <span className="text-[10px] opacity-75">Distribuição fluida</span>
                     </div>
                   </div>
-                ) : (
+                ) : (() => {
+                  const activeLen = selectedNumbers.length >= 6 ? selectedNumbers.length : betCount;
+                  const goldSumMin = activeLen === 6 ? 160 : Math.round((160 * activeLen) / 6);
+                  const goldSumMax = activeLen === 6 ? 240 : Math.round((240 * activeLen) / 6);
+                  const parityTargetLabel = activeLen === 6 ? '3/3 ou 4/2' : activeLen === 7 ? '4/3 ou 3/4' : 'Equil.';
+                  return (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 text-xs">
                     {/* Soma */}
                     <div className={`p-2.5 rounded-xl border transition-colors ${
@@ -2372,12 +2481,12 @@ const App: React.FC = () => {
                       currentValidation.sumValid ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-red-50/70 border-red-200 text-red-900'
                     }`}>
                       <div className="flex justify-between items-center mb-1">
-                        <span className="font-bold text-[10px] uppercase">Soma (160–240)</span>
+                        <span className="font-bold text-[10px] uppercase">Soma ({goldSumMin}–{goldSumMax})</span>
                         {logicOptions.sum160to240 && (currentValidation.sumValid ? <Check size={14} className="text-emerald-600 font-bold" /> : <span className="text-[10px] font-bold text-red-600">Ajustar</span>)}
                       </div>
                       <p className="text-base font-black">{currentValidation.sum}</p>
                       <span className="text-[10px] opacity-75">
-                        {currentValidation.sum < 160 ? 'Abaixo do ideal' : currentValidation.sum > 240 ? 'Acima do ideal' : 'Na Zona de Ouro'}
+                        {currentValidation.sum < goldSumMin ? 'Abaixo do ideal' : currentValidation.sum > goldSumMax ? 'Acima do ideal' : 'Na Zona de Ouro'}
                       </span>
                     </div>
 
@@ -2388,7 +2497,7 @@ const App: React.FC = () => {
                     }`}>
                       <div className="flex justify-between items-center mb-1">
                         <span className="font-bold text-[10px] uppercase">Par / Ímpar</span>
-                        {logicOptions.balanceEvenOdd && (currentValidation.evenOddValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">3/3 ou 4/2</span>)}
+                        {logicOptions.balanceEvenOdd && (currentValidation.evenOddValid ? <Check size={14} className="text-emerald-600" /> : <span className="text-[10px] font-bold text-red-600">{parityTargetLabel}</span>)}
                       </div>
                       <p className="text-base font-black">{currentValidation.evenCount}P / {currentValidation.oddCount}I</p>
                       <span className="text-[10px] opacity-75">Equilíbrio da cartela</span>
@@ -2548,7 +2657,8 @@ const App: React.FC = () => {
                       <span className="text-[10px] opacity-75">μ=9.8 concursos</span>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Banner de Diagnóstico de Plausibilidade Histórica (Macro-Clusters vs 1,2,3,4,5,6) */}
                 {selectedNumbers.length >= 3 && currentPlausibility.classification === 'anomala' && (
@@ -2735,6 +2845,81 @@ const App: React.FC = () => {
 
                 {/* Corpo do Bloco Centralizado */}
                 <div className="p-4 sm:p-5 space-y-4">
+                  {/* Seletor Rápido de Dezenas por Jogo (6, 7, 8+ dezenas sincronizado com a Cartela) */}
+                  {(() => {
+                    const sizeOptions =
+                      currentLottery === 'lotofacil'
+                        ? [15, 16, 17, 18, 19, 20]
+                        : currentLottery === 'maismilionaria'
+                        ? [6, 7, 8, 9, 10, 11, 12]
+                        : [6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+                    const quickSizes =
+                      currentLottery === 'lotofacil' ? [15, 16, 17] : [6, 7, 8];
+                    const baseChoice = currentLottery === 'lotofacil' ? 15 : 6;
+                    const unitComb = combinations(betCount, baseChoice);
+                    const unitCost =
+                      currentLottery === 'lotofacil'
+                        ? (BET_COST_BY_SIZE_LOTOFACIL[betCount] ?? unitComb * 3)
+                        : currentLottery === 'maismilionaria'
+                        ? unitComb * 6
+                        : (BET_COST_BY_SIZE_MEGA[betCount] ?? unitComb * 5);
+
+                    const handleSelectBetCount = (newCount: number) => {
+                      setBetCount(newCount);
+                      if (selectedNumbers.length > newCount) {
+                        setSelectedNumbers(prev => prev.slice(0, newCount));
+                      }
+                    };
+
+                    return (
+                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-slate-700">
+                            Dezenas por Jogo:
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {quickSizes.map(sz => (
+                              <button
+                                key={sz}
+                                type="button"
+                                onClick={() => handleSelectBetCount(sz)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black border cursor-pointer transition-all ${
+                                  betCount === sz
+                                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {sz} dez.
+                              </button>
+                            ))}
+                            <select
+                              aria-label="Mais quantidades de dezenas por jogo"
+                              value={betCount}
+                              onChange={e => handleSelectBetCount(Number(e.target.value))}
+                              className="px-2 py-1 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-800 cursor-pointer outline-none"
+                            >
+                              {sizeOptions.map(n => (
+                                <option key={n} value={n}>{n} dez.</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-slate-600">
+                          <span>
+                            {unitComb > 1 ? (
+                              <>Equivale a <strong className="text-slate-900">{unitComb} jogos</strong> simples de {baseChoice} dezenas</>
+                            ) : (
+                              <>Aposta simples padrão ({baseChoice} dezenas)</>
+                            )}
+                          </span>
+                          <span className="font-black text-emerald-800">
+                            R$ {unitCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/jogo
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Seletor de Estratégia Matemática Simplificado + Modo Especialista Recolhível */}
                   {generationModeTab !== 'ai' && (() => {
                     const activeStrategy = logicOptions.calculationStrategy || 'combinatorial_cover';
@@ -3053,8 +3238,8 @@ const App: React.FC = () => {
                         <Layers size={16} className={logicOptions.calculationStrategy === 'hybrid_combinatorial' ? 'text-cyan-200' : 'text-emerald-400'} />
                         <span>
                           {logicOptions.calculationStrategy === 'hybrid_combinatorial'
-                            ? `GERAR ${portfolioBatchSize} JOGOS — ESTRATÉGIA HÍBRIDA`
-                            : `GERAR CARTEIRA DE ${portfolioBatchSize} JOGOS ÚNICOS`}
+                            ? `GERAR ${portfolioBatchSize} JOGOS (${betCount} DEZ.) — HÍBRIDA`
+                            : `GERAR ${portfolioBatchSize} JOGOS ÚNICOS (${betCount} DEZ.)`}
                         </span>
                       </button>
 
@@ -3081,7 +3266,7 @@ const App: React.FC = () => {
                                 {lastBatchCoverage.seedUsed !== undefined ? (
                                   <>Seed: <strong className="font-mono">{lastBatchCoverage.seedUsed}</strong></>
                                 ) : lastBatchCoverage.pctSum160to240 !== undefined ? (
-                                  <>Soma 160–240: <strong>{lastBatchCoverage.pctSum160to240.toFixed(0)}%</strong></>
+                                  <>Soma ideal: <strong>{lastBatchCoverage.pctSum160to240.toFixed(0)}%</strong></>
                                 ) : null}
                               </span>
                             </div>
@@ -3101,7 +3286,7 @@ const App: React.FC = () => {
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer disabled:opacity-50"
                       >
                         <Zap size={16} />
-                        <span>GERAR E SALVAR 1 JOGO</span>
+                        <span>GERAR E SALVAR 1 JOGO ({betCount} DEZ.)</span>
                       </button>
 
                       <div className="grid grid-cols-2 gap-2">
@@ -3112,7 +3297,7 @@ const App: React.FC = () => {
                           className="bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
                         >
                           <Grid3X3 size={14} className="text-emerald-700" />
-                          <span>Preencher Cartela</span>
+                          <span>Preencher ({betCount} dez.)</span>
                         </button>
 
                         <button 
@@ -3121,12 +3306,12 @@ const App: React.FC = () => {
                           className="bg-slate-100 text-slate-800 py-2.5 px-3 rounded-xl font-bold hover:bg-slate-200 transition-all flex items-center justify-center space-x-1.5 text-xs cursor-pointer"
                         >
                           <Dice5 size={15} />
-                          <span>Surpresinha</span>
+                          <span>Surpresinha ({betCount})</span>
                         </button>
                       </div>
 
                       <p className="text-[10px] text-slate-500 leading-snug">
-                        “Preencher Cartela” marca as dezenas à esquerda sem salvar ainda; “Gerar e Salvar 1 Jogo” e “Surpresinha” já registram no Histórico.
+                        “Preencher” marca {betCount} dezenas à esquerda sem salvar ainda; “Gerar e Salvar 1 Jogo” e “Surpresinha” já registram no Histórico.
                       </p>
                     </div>
                   )}
@@ -3139,11 +3324,11 @@ const App: React.FC = () => {
                           {currentLottery === 'lotofacil'
                             ? 'Zona de Ouro Lotofácil (180–220)'
                             : currentLottery === 'maismilionaria'
-                            ? 'Zona de Ouro +Milionária (130–175)'
-                            : 'Zona de Ouro Mega-Sena (160–240)'}
+                            ? `Zona de Ouro +Milionária (${betCount === 6 ? '130–175' : `${Math.round((130 * betCount) / 6)}–${Math.round((175 * betCount) / 6)}`})`
+                            : `Zona de Ouro Mega-Sena (${betCount === 6 ? '160–240' : `${Math.round((160 * betCount) / 6)}–${Math.round((240 * betCount) / 6)}`})`}
                         </p>
                         <p className="text-[11px] text-slate-600">
-                          Consulta o Concurso Oficial <strong>#{activeOfficialDraw.contestNumber}</strong> ({activeOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) e aplica as regras ativas com desduplicação garantida.
+                          Consulta o Concurso Oficial <strong>#{activeOfficialDraw.contestNumber}</strong> ({activeOfficialDraw.numbers.map(n => n.toString().padStart(2, '0')).join(' ')}) e gera apostas de <strong>{betCount} dezenas</strong> com desduplicação garantida.
                         </p>
                       </div>
 
@@ -3167,7 +3352,7 @@ const App: React.FC = () => {
                         ) : (
                           <>
                             <Sparkles size={16} />
-                            <span>GERAR 1 JOGO COM IA</span>
+                            <span>GERAR 1 JOGO ({betCount} DEZ.) COM IA</span>
                           </>
                         )}
                       </button>
@@ -3183,7 +3368,7 @@ const App: React.FC = () => {
                         ) : (
                           <>
                             <Layers size={15} />
-                            <span>COMBO 5 JOGOS VARIADOS (IA)</span>
+                            <span>COMBO 5 JOGOS DE {betCount} DEZ. (IA)</span>
                           </>
                         )}
                       </button>
@@ -3854,61 +4039,140 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Barra de Filtros e Busca */}
-            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 sm:p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
-              {/* Filtro por Categoria */}
-              <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                <span className="text-[11px] font-bold text-slate-500 mr-1 flex items-center">
-                  <Filter size={13} className="mr-1" /> Tipo:
-                </span>
-                {[
-                  { id: 'all', label: 'Todos' },
-                  { id: 'ai', label: 'IA' },
-                  { id: 'smart_rules', label: 'Regras' },
-                  { id: 'random', label: 'Surpresinha' },
-                  { id: 'manual', label: 'Manual' }
-                ].map(tab => (
+            {/* Barra de Filtros, Acertos e Ordenação */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 sm:p-4 mb-6 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* Filtro por Categoria */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-[11px] font-bold text-slate-500 mr-1 flex items-center">
+                    <Filter size={13} className="mr-1" /> Tipo:
+                  </span>
+                  {[
+                    { id: 'all', label: 'Todos' },
+                    { id: 'ai', label: 'IA' },
+                    { id: 'smart_rules', label: 'Regras' },
+                    { id: 'random', label: 'Surpresinha' },
+                    { id: 'manual', label: 'Manual' }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setFilterType(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                        filterType === tab.id 
+                          ? 'bg-emerald-700 text-white shadow-sm' 
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Busca por dezena e ordenação */}
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <div className="relative flex items-center">
+                    <Search size={14} className="absolute left-2.5 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Buscar dezena..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 outline-none w-32 sm:w-36 focus:border-emerald-500"
+                    />
+                  </div>
+
                   <button
-                    key={tab.id}
                     type="button"
-                    onClick={() => setFilterType(tab.id)}
-                    className={`px-3 py-1.5 rounded-xl font-bold transition-all ${
-                      filterType === tab.id 
-                        ? 'bg-emerald-700 text-white shadow-sm' 
-                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                    onClick={() =>
+                      setSortOrder(prev =>
+                        prev === 'hits_desc' ? 'hits_best_past' : prev === 'hits_best_past' ? 'newest' : 'hits_desc'
+                      )
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 border transition-all cursor-pointer ${
+                      sortOrder === 'hits_desc' || sortOrder === 'hits_best_past'
+                        ? 'bg-amber-500 text-amber-950 border-amber-400 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50 hover:border-amber-300'
                     }`}
+                    title="Organizar rapidamente pelas apostas com maior número de acertos"
                   >
-                    {tab.label}
+                    <Trophy size={13} />
+                    <span>
+                      {sortOrder === 'hits_best_past'
+                        ? 'Mais Acertos (Histórico)'
+                        : 'Mais Acertos'}
+                    </span>
                   </button>
-                ))}
+
+                  <div className="flex items-center space-x-1">
+                    <ArrowUpDown size={14} className="text-slate-400" />
+                    <select 
+                      aria-label="Organizar apostas do histórico"
+                      value={sortOrder} 
+                      onChange={(e) => setSortOrder(e.target.value as typeof sortOrder)}
+                      className="py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 outline-none cursor-pointer focus:border-emerald-500"
+                    >
+                      <option value="newest">Mais recentes</option>
+                      <option value="oldest">Mais antigos</option>
+                      <option value="hits_desc">
+                        Maior nº de acertos ({selectedCheckerContest === 'custom' ? 'Personalizado' : `Concurso #${selectedCheckerDrawMeta?.contest ?? activeOfficialDraw.contestNumber}`})
+                      </option>
+                      <option value="hits_best_past">
+                        Maior nº de acertos (Melhor nos {pastContestsForChecker.length} concursos)
+                      </option>
+                      <option value="hits_asc">Menor nº de acertos</option>
+                      <option value="sum_desc">Maior soma</option>
+                      <option value="sum_asc">Menor soma</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              {/* Busca por dezena e ordenação */}
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <div className="relative flex items-center">
-                  <Search size={14} className="absolute left-2.5 text-slate-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Buscar dezena..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 outline-none w-32 sm:w-36 focus:border-emerald-500"
-                  />
+              {/* Filtro por Número de Acertos */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-slate-200/70 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-500 mr-1 flex items-center">
+                    <Award size={13} className="mr-1 text-emerald-600" /> Acertos:
+                  </span>
+                  {(currentLottery === 'lotofacil'
+                    ? [
+                        { id: 'all', label: `Todos (${historyHitsCounts.total})` },
+                        { id: '11plus', label: `11+ acertos (${historyHitsCounts.plus11})` },
+                        { id: '12plus', label: `12+ acertos (${historyHitsCounts.plus12})` },
+                        { id: '13plus', label: `13+ acertos (${historyHitsCounts.plus13})` },
+                        { id: '14plus', label: `14+ acertos (${historyHitsCounts.plus14})` }
+                      ]
+                    : [
+                        { id: 'all', label: `Todos (${historyHitsCounts.total})` },
+                        { id: '1plus', label: `1+ (${historyHitsCounts.plus1})` },
+                        { id: '2plus', label: `2+ (${historyHitsCounts.plus2})` },
+                        { id: '3plus', label: `3+ Terno (${historyHitsCounts.plus3})` },
+                        { id: '4plus', label: `4+ Quadra (${historyHitsCounts.plus4})` },
+                        { id: '5plus', label: `5+ Quina (${historyHitsCounts.plus5})` }
+                      ]
+                  ).map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setHistoryMinHits(opt.id as typeof historyMinHits)}
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                        historyMinHits === opt.id
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
 
-                <div className="flex items-center space-x-1">
-                  <ArrowUpDown size={14} className="text-slate-400" />
-                  <select 
-                    value={sortOrder} 
-                    onChange={(e: any) => setSortOrder(e.target.value)}
-                    className="py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-700 outline-none cursor-pointer"
-                  >
-                    <option value="newest">Mais recentes</option>
-                    <option value="oldest">Mais antigos</option>
-                    <option value="sum_desc">Maior soma</option>
-                    <option value="sum_asc">Menor soma</option>
-                  </select>
-                </div>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  {sortOrder === 'hits_best_past'
+                    ? `Base: melhor pontuação em ${pastContestsForChecker.length} concursos oficiais`
+                    : selectedCheckerContest === 'custom'
+                    ? 'Base: resultado personalizado do Conferidor'
+                    : `Base: Concurso #${selectedCheckerDrawMeta?.contest ?? activeOfficialDraw.contestNumber} (${selectedCheckerDrawMeta?.date ?? activeOfficialDraw.date})`}
+                </span>
               </div>
             </div>
 
@@ -3950,13 +4214,14 @@ const App: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      {(filterType !== 'all' || searchTerm.trim() !== '' || onlyPrizes) && (
+                      {(filterType !== 'all' || searchTerm.trim() !== '' || onlyPrizes || historyMinHits !== 'all') && (
                         <button
                           type="button"
                           onClick={() => {
                             setFilterType('all');
                             setSearchTerm('');
                             setOnlyPrizes(false);
+                            setHistoryMinHits('all');
                           }}
                           className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-colors cursor-pointer"
                         >
@@ -3989,7 +4254,13 @@ const App: React.FC = () => {
                     drawnTrevos={activeRefTrevos}
                     onDelete={handleDeleteBet} 
                     onAnalyze={handleAnalyzeBet} 
-                    isAnalyzing={analyzingId === bet.id} 
+                    isAnalyzing={analyzingId === bet.id}
+                    pastComparison={sortOrder === 'hits_best_past' ? betPastComparisons.map.get(bet.id) : undefined}
+                    onSelectContest={sortOrder === 'hits_best_past' ? (contestNum) => {
+                      handleSelectPastContestInChecker(contestNum);
+                      setMyGamesSubTab('checker');
+                    } : undefined}
+                    selectedContestNumber={selectedCheckerContest}
                   />
                 ))}
               </div>

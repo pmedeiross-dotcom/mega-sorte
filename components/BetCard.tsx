@@ -5,6 +5,7 @@ import NumberBall from './NumberBall';
 import { Trash2, Share2, Calendar, Activity, Calculator, FileDown, Copy, Check, Award, Cloud, History, ChevronDown, ChevronUp, Target } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { getStrategyMeta } from '../utils/strategyCatalog';
+import { combinations } from '../utils/probabilityEngine';
 
 export interface PastContestMatch {
   contest: number;
@@ -359,8 +360,17 @@ const BetCard: React.FC<BetCardProps> = ({
           {evenCount}P / {oddCount}I
         </div>
 
-        <div className="px-2 py-1 rounded-lg bg-gray-50 text-gray-600 text-[11px] font-medium">
+        <div className={`px-2 py-1 rounded-lg text-[11px] font-bold border ${
+          !isLotofacil && bet.numbers.length > 6
+            ? 'bg-cyan-50 text-cyan-900 border-cyan-200'
+            : 'bg-gray-50 text-gray-600 border-transparent font-medium'
+        }`}>
           {bet.numbers.length} dezenas
+          {!isLotofacil && bet.numbers.length > 6 && (
+            <span className="ml-1 text-[10px] opacity-85">
+              ({combinations(bet.numbers.length, 6)} comb.)
+            </span>
+          )}
         </div>
       </div>
 

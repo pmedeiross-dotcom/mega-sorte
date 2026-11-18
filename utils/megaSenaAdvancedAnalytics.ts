@@ -795,24 +795,29 @@ export const calculateCooccurrenceLift = (
  * Avalia o quão bem a aposta se conforma com o modelo estatístico esperado da Mega-Sena (0 a 100%).
  */
 export const calculateChiSquareConformity = (numbers: number[]): number => {
-  if (numbers.length !== 6) return 50;
+  const k = numbers.length;
+  if (k < 6) return 50;
   const sum = numbers.reduce((a, b) => a + b, 0);
   const evens = numbers.filter(n => n % 2 === 0).length;
   const frames = numbers.filter(n => FRAME_NUMBERS.includes(n)).length;
 
   let penalty = 0;
-  // Penalidade de soma: média teórica é 183
-  const sumDev = Math.abs(sum - 183);
-  if (sumDev > 45) penalty += Math.min(30, (sumDev - 45) * 0.8);
+  // Penalidade de soma: média teórica é 183 em 6 dezenas, escalada proporcionalmente
+  const expectedSum = (183 * k) / 6;
+  const sumTolerance = (45 * k) / 6;
+  const sumDev = Math.abs(sum - expectedSum);
+  if (sumDev > sumTolerance) penalty += Math.min(30, (sumDev - sumTolerance) * 0.8);
 
-  // Penalidade de paridade: ideal é 3P (ou 2P/4P)
-  const evenDev = Math.abs(evens - 3);
+  // Penalidade de paridade: ideal é metade pares / metade ímpares
+  const evenDev = Math.abs(evens - k / 2);
   if (evenDev >= 2) penalty += 20;
-  if (evenDev === 3) penalty += 35; // 6P ou 0P
+  if (evens === 0 || evens === k) penalty += 35; // 100% par ou 100% ímpar
 
-  // Penalidade de moldura: média é 2.8
-  const frameDev = Math.abs(frames - 2.8);
-  if (frameDev > 1.8) penalty += 15;
+  // Penalidade de moldura: média é ~2.8 em 6 dezenas
+  const expectedFrames = (2.8 * k) / 6;
+  const frameTolerance = (1.8 * k) / 6;
+  const frameDev = Math.abs(frames - expectedFrames);
+  if (frameDev > frameTolerance) penalty += 15;
 
   return Math.max(10, Math.min(100, Math.round(100 - penalty)));
 };
@@ -859,34 +864,41 @@ export const generateSmartDiagnosticSuggestions = (
   const suggestions: string[] = [];
   const strengths: string[] = [];
 
-  // Avaliação da Soma
-  if (sorted.length === 6) {
-    if (sum < 160) {
-      suggestions.push(`Soma baixa (${sum} < 160): 78,4% dos concursos premiados somam entre 160 e 240. Sugestão: Substitua uma dezena baixa por outra entre 35 e 55.`);
-    } else if (sum > 240) {
-      suggestions.push(`Soma alta (${sum} > 240): Apenas 9,8% dos concursos passam de 240. Sugestão: Troque uma dezena alta por uma na faixa central (20 a 35).`);
+  // Avaliação da Soma (escalada proporcionalmente para 6, 7 ou mais dezenas)
+  if (sorted.length >= 6) {
+    const k = sorted.length;
+    const minGold = k === 6 ? 160 : Math.round((160 * k) / 6);
+    const maxGold = k === 6 ? 240 : Math.round((240 * k) / 6);
+    if (sum < minGold) {
+      suggestions.push(`Soma baixa (${sum} < ${minGold}): Para jogos de ${k} dezenas, a faixa central recomendada fica entre ${minGold} e ${maxGold}. Sugestão: Substitua uma dezena baixa por outra entre 35 e 55.`);
+    } else if (sum > maxGold) {
+      suggestions.push(`Soma alta (${sum} > ${maxGold}): Para jogos de ${k} dezenas, a faixa central recomendada fica entre ${minGold} e ${maxGold}. Sugestão: Troque uma dezena alta por uma na faixa central (20 a 35).`);
     } else {
-      strengths.push(`Soma ideal (${sum}): Localizada com precisão dentro da Zona de Ouro (160 a 240).`);
+      strengths.push(`Soma ideal (${sum}): Localizada dentro da Zona de Ouro para ${k} dezenas (${minGold} a ${maxGold}).`);
     }
   }
 
   // Avaliação de Paridade
   if (sorted.length >= 6) {
-    if (evens === 6 || odds === 6) {
-      suggestions.push(`Paridade crítica (${evens}P/${odds}I): Combinações 100% pares ou ímpares saíram em menos de 1,2% dos sorteios. Sugestão: Alterne 2 ou 3 dezenas para paridade mista.`);
-    } else if (evens === 5 || odds === 5) {
-      suggestions.push(`Paridade assimétrica (${evens}P/${odds}I): Ocorrência de 12,3%. Sugestão: Buscar 3P/3I ou 4P/2I amplia a probabilidade para 79,5%.`);
+    const k = sorted.length;
+    const maxBalancedDiff = k % 2 === 0 ? 2 : 3;
+    if (evens === 0 || odds === 0) {
+      suggestions.push(`Paridade crítica (${evens}P/${odds}I): Combinações 100% pares ou ímpares são estatisticamente raras. Sugestão: Alterne 2 ou 3 dezenas para paridade mista.`);
+    } else if (Math.abs(evens - odds) > maxBalancedDiff) {
+      suggestions.push(`Paridade assimétrica (${evens}P/${odds}I): Buscar proporção mais equilibrada amplia a aderência à curva histórica.`);
     } else {
-      strengths.push(`Paridade equilibrada (${evens}P/${odds}I): Padrão ótimo presente em quase 80% dos sorteios.`);
+      strengths.push(`Paridade equilibrada (${evens}P/${odds}I): Padrão ótimo para ${k} dezenas.`);
     }
   }
 
   // Avaliação Moldura x Centro
   if (sorted.length >= 6) {
-    if (frames > 4) {
-      suggestions.push(`Concentração excessiva na moldura (${frames}/6): Sugestão: Desloque ${frames - 3} dezena(s) para o centro da cartela (12 a 49).`);
+    const k = sorted.length;
+    const maxFrame = k >= 7 ? Math.ceil(k * 0.7) : 4;
+    if (frames > maxFrame) {
+      suggestions.push(`Concentração excessiva na moldura (${frames}/${k}): Sugestão: Desloque ${frames - Math.ceil(k / 2)} dezena(s) para o centro da cartela (12 a 49).`);
     } else if (frames < 2) {
-      suggestions.push(`Poucas dezenas na moldura (${frames}/6): O padrão mais equilibrado é ter entre 2 e 3 na moldura e 3 a 4 no miolo.`);
+      suggestions.push(`Poucas dezenas na moldura (${frames}/${k}): O padrão mais equilibrado é ter pelo menos 2 dezenas na moldura.`);
     } else {
       strengths.push(`Distribuição Moldura/Centro em harmonia (${frames} Moldura / ${centers} Centro).`);
     }
@@ -938,75 +950,97 @@ export const generateSmartDiagnosticSuggestions = (
  * 6. Otimizador Automático de Apostas ("Auto-Corrigir e Equilibrar Combinação")
  * Ajusta de forma cirúrgica os números para atingir 100% de conformidade com todas as regras matemáticas.
  */
-export const autoOptimizeGameNumbers = (currentNumbers: number[]): { optimizedNumbers: number[]; changesMade: string[] } => {
+export const autoOptimizeGameNumbers = (
+  currentNumbers: number[],
+  targetSize?: number
+): { optimizedNumbers: number[]; changesMade: string[] } => {
+  const safeTarget = Math.max(
+    6,
+    Math.min(15, Math.trunc(targetSize ?? (currentNumbers?.length >= 6 ? currentNumbers.length : 6)))
+  );
+
   if (!currentNumbers || currentNumbers.length === 0) {
-    return { optimizedNumbers: [5, 10, 23, 33, 42, 53], changesMade: ['Criada combinação padrão de alta afinidade'] };
+    const base = [5, 10, 23, 33, 42, 53, 17, 29, 38, 46, 12, 58, 7, 44, 21].slice(0, safeTarget).sort((a, b) => a - b);
+    return { optimizedNumbers: base, changesMade: [`Criada combinação padrão de alta afinidade (${safeTarget} dezenas)`] };
   }
 
   let candidates = Array.from(new Set(currentNumbers)).sort((a, b) => a - b);
   const changes: string[] = [];
 
-  // Se faltam dezenas para completar 6
-  while (candidates.length < 6) {
-    const missing = CACHED_ADVANCED_ANALYTICS.cycleAnalysis.missingNumbers.find(n => !candidates.includes(n)) 
+  // Se faltam dezenas para completar safeTarget
+  while (candidates.length < safeTarget) {
+    const missing = CACHED_ADVANCED_ANALYTICS.cycleAnalysis.missingNumbers.find(n => !candidates.includes(n))
       || CACHED_ADVANCED_ANALYTICS.paretoTopNumbers.map(p => p.number).find(n => !candidates.includes(n))
       || Math.floor(Math.random() * 60) + 1;
-    candidates.push(missing);
-    candidates = Array.from(new Set(candidates)).sort((a, b) => a - b);
-    changes.push(`Adicionada dezena ${missing.toString().padStart(2, '0')} para completar 6 dezenas`);
+    if (!candidates.includes(missing)) {
+      candidates.push(missing);
+      candidates = candidates.sort((a, b) => a - b);
+      changes.push(`Adicionada dezena ${missing.toString().padStart(2, '0')} para completar ${safeTarget} dezenas`);
+    }
   }
 
-  // Se tem mais de 6 dezenas, pega as 6 melhores
-  if (candidates.length > 6) {
-    candidates = candidates.slice(0, 6);
-    changes.push('Limitado às 6 dezenas com melhor alinhamento');
+  // Se tem mais de safeTarget dezenas, limita ao tamanho configurado
+  if (candidates.length > safeTarget) {
+    candidates = candidates.slice(0, safeTarget);
+    changes.push(`Limitado às ${safeTarget} dezenas configuradas`);
   }
 
   // 1. Ajuste de Paridade
-  let evens = candidates.filter(n => n % 2 === 0);
-  let odds = candidates.filter(n => n % 2 !== 0);
+  const evens = candidates.filter(n => n % 2 === 0);
+  const odds = candidates.filter(n => n % 2 !== 0);
 
-  if (evens.length === 6) {
-    // Troca o último par por um ímpar próximo que seja primo
+  if (evens.length === candidates.length) {
     const toReplace = candidates[candidates.length - 1];
-    const replacement = PRIME_NUMBERS.find(p => !candidates.includes(p) && p % 2 !== 0 && Math.abs(p - toReplace) <= 7) || 53;
-    candidates = candidates.map(n => n === toReplace ? replacement : n).sort((a, b) => a - b);
-    changes.push(`Substituída dezena par ${toReplace} pelo primo ímpar ${replacement} para equilibrar paridade`);
-  } else if (odds.length === 6) {
+    const replacement = PRIME_NUMBERS.find(p => !candidates.includes(p) && p % 2 !== 0 && Math.abs(p - toReplace) <= 7)
+      || PRIME_NUMBERS.find(p => !candidates.includes(p) && p % 2 !== 0)
+      || 53;
+    if (!candidates.includes(replacement)) {
+      candidates = candidates.map(n => n === toReplace ? replacement : n).sort((a, b) => a - b);
+      changes.push(`Substituída dezena par ${toReplace} pelo primo ímpar ${replacement} para equilibrar paridade`);
+    }
+  } else if (odds.length === candidates.length) {
     const toReplace = candidates[0];
-    const replacement = 10;
-    candidates = candidates.map(n => n === toReplace ? replacement : n).sort((a, b) => a - b);
-    changes.push(`Substituída dezena ímpar ${toReplace} pelo par ${replacement} para equilibrar paridade`);
+    const replacement = [10, 22, 34, 42, 54].find(v => !candidates.includes(v)) || 10;
+    if (!candidates.includes(replacement)) {
+      candidates = candidates.map(n => n === toReplace ? replacement : n).sort((a, b) => a - b);
+      changes.push(`Substituída dezena ímpar ${toReplace} pelo par ${replacement} para equilibrar paridade`);
+    }
   }
 
   // 2. Ajuste de Moldura x Centro
-  let frames = candidates.filter(n => FRAME_NUMBERS.includes(n));
-  if (frames.length > 4) {
-    // Mover 1 dezena para o centro
+  const frames = candidates.filter(n => FRAME_NUMBERS.includes(n));
+  const maxFramesAllowed = safeTarget >= 7 ? Math.ceil(safeTarget * 0.7) : 4;
+  if (frames.length > maxFramesAllowed) {
     const toReplace = frames[frames.length - 1];
-    const centerCandidate = CENTER_NUMBERS.find(c => !candidates.includes(c) && (toReplace % 2 === c % 2)) || 23;
-    candidates = candidates.map(n => n === toReplace ? centerCandidate : n).sort((a, b) => a - b);
-    changes.push(`Deslocada dezena da moldura ${toReplace} para o centro ${centerCandidate}`);
+    const centerCandidate = CENTER_NUMBERS.find(c => !candidates.includes(c) && (toReplace % 2 === c % 2))
+      || CENTER_NUMBERS.find(c => !candidates.includes(c))
+      || 23;
+    if (!candidates.includes(centerCandidate)) {
+      candidates = candidates.map(n => n === toReplace ? centerCandidate : n).sort((a, b) => a - b);
+      changes.push(`Deslocada dezena da moldura ${toReplace} para o centro ${centerCandidate}`);
+    }
   }
 
-  // 3. Ajuste de Soma para Zona de Ouro (160 a 240)
-  let currentSum = candidates.reduce((a, b) => a + b, 0);
-  if (currentSum < 160) {
+  // 3. Ajuste de Soma para Zona de Ouro proporcional (160–240 para 6 dez., ~187–280 para 7 dez.)
+  const minGoldSum = safeTarget === 6 ? 160 : Math.round((160 * safeTarget) / 6);
+  const maxGoldSum = safeTarget === 6 ? 240 : Math.round((240 * safeTarget) / 6);
+  const currentSum = candidates.reduce((a, b) => a + b, 0);
+  if (currentSum < minGoldSum) {
     const lowest = candidates[0];
-    if (lowest < 15) {
-      const boost = 37;
-      if (!candidates.includes(boost)) {
+    if (lowest < 20) {
+      const boost = [37, 43, 47, 53].find(b => !candidates.includes(b) && b > lowest);
+      if (boost) {
         candidates = candidates.map(n => n === lowest ? boost : n).sort((a, b) => a - b);
-        changes.push(`Elevada dezena ${lowest} para ${boost} para atingir a Zona de Ouro de somas (160-240)`);
+        changes.push(`Elevada dezena ${lowest} para ${boost} para atingir a Zona de Ouro de somas (${minGoldSum}-${maxGoldSum})`);
       }
     }
-  } else if (currentSum > 240) {
+  } else if (currentSum > maxGoldSum) {
     const highest = candidates[candidates.length - 1];
-    if (highest > 50) {
-      const drop = 32;
-      if (!candidates.includes(drop)) {
+    if (highest > 45) {
+      const drop = [32, 28, 24, 18].find(d => !candidates.includes(d) && d < highest);
+      if (drop) {
         candidates = candidates.map(n => n === highest ? drop : n).sort((a, b) => a - b);
-        changes.push(`Reduzida dezena ${highest} para ${drop} para manter a soma abaixo de 240`);
+        changes.push(`Reduzida dezena ${highest} para ${drop} para manter a soma abaixo de ${maxGoldSum}`);
       }
     }
   }
@@ -1015,7 +1049,7 @@ export const autoOptimizeGameNumbers = (currentNumbers: number[]): { optimizedNu
   const primesCount = candidates.filter(n => PRIME_NUMBERS.includes(n)).length;
   if (primesCount === 0) {
     const candidateToReplace = candidates[1];
-    const primePick = 23;
+    const primePick = PRIME_NUMBERS.find(p => !candidates.includes(p)) || 23;
     if (!candidates.includes(primePick)) {
       candidates = candidates.map(n => n === candidateToReplace ? primePick : n).sort((a, b) => a - b);
       changes.push(`Adicionado o número primo ${primePick} para conformidade com a distribuição áurea`);
@@ -1070,14 +1104,21 @@ export const evaluateAdvancedGameMetrics = (
   const warmCount = sorted.filter(n => statusMap.get(n) === 'morna').length;
   const coldCount = sorted.filter(n => statusMap.get(n) === 'fria').length;
 
-  const primesValid = primesCount >= 1 && primesCount <= 3;
-  const fibonacciValid = fibonacciCount <= 2;
-  const multiplesOfThreeValid = multiplesOfThreeCount >= 1 && multiplesOfThreeCount <= 3;
-  const frameCenterValid = frameCount >= 2 && frameCount <= 4 && centerCount >= 2 && centerCount <= 4;
-  const paretoValid = paretoCount >= 1 && paretoCount <= 3;
+  const k = Math.max(6, sorted.length);
+  const maxPrimeCap = k >= 7 ? Math.ceil(k * 0.57) : 3;
+  const maxMult3Cap = k >= 7 ? Math.ceil(k * 0.57) : 3;
+  const maxFrameCap = k >= 7 ? Math.ceil(k * 0.7) : 4;
+  const maxCenterCap = k >= 7 ? Math.ceil(k * 0.7) : 4;
+  const maxParetoCap = k >= 7 ? Math.ceil(k * 0.57) : 3;
+
+  const primesValid = primesCount >= 1 && primesCount <= maxPrimeCap;
+  const fibonacciValid = fibonacciCount <= (k >= 8 ? 3 : 2);
+  const multiplesOfThreeValid = multiplesOfThreeCount >= 1 && multiplesOfThreeCount <= maxMult3Cap;
+  const frameCenterValid = frameCount >= 2 && frameCount <= maxFrameCap && centerCount >= 2 && centerCount <= maxCenterCap;
+  const paretoValid = paretoCount >= 1 && paretoCount <= maxParetoCap;
   const cycleValid = cycleMissingCount >= 1;
   const duquesValid = Boolean(matchedDuque);
-  const rowColValid = maxInRow <= 2 && maxInCol <= 2;
+  const rowColValid = maxInRow <= (k >= 9 ? 3 : 2) && maxInCol <= (k >= 9 ? 3 : 2);
 
   // Novos Cálculos Estatísticos (propaga analyticsOverride para evitar vazamento futuro)
   const entropyData = calculateShannonEntropy(sorted);

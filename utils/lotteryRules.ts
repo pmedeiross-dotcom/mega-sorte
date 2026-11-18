@@ -105,31 +105,34 @@ export const validateGameAgainstRules = (
   analyticsOverride?: MegaAnalyticsSnapshot
 ): GameValidationDetails => {
   const sorted = [...numbers].sort((a, b) => a - b);
+  const k = Math.max(1, sorted.length);
   const sum = sorted.reduce((acc, curr) => acc + curr, 0);
 
-  // 1. Soma entre 160 e 240 (Zona de Ouro histórica onde ocorrem 78.4% dos prêmios)
-  const sumValid = !logic.sum160to240 || (sum >= 160 && sum <= 240);
+  // 1. Soma na Zona de Ouro (160 a 240 para 6 dezenas; proporcional para 7+ dezenas, ex: 187 a 280)
+  const goldSumMin = k === 6 ? 160 : Math.round((160 * k) / 6);
+  const goldSumMax = k === 6 ? 240 : Math.round((240 * k) / 6);
+  const sumValid = !logic.sum160to240 || (sum >= goldSumMin && sum <= goldSumMax);
 
-  // 2. Equilíbrio Par/Ímpar (3/3 ou 4/2 ou 2/4 - cobrem 79.5% de todos os concursos)
+  // 2. Equilíbrio Par/Ímpar (6 dez: 3/3, 4/2, 2/4; 7 dez: 4/3, 3/4, 5/2, 2/5)
   let evenCount = 0;
   let oddCount = 0;
   sorted.forEach(n => {
     if (n % 2 === 0) evenCount++;
     else oddCount++;
   });
+  const maxParityDiff = k % 2 === 0 ? 2 : 3;
   const evenOddValid = !logic.balanceEvenOdd || (
-    (evenCount === 3 && oddCount === 3) ||
-    (evenCount === 4 && oddCount === 2) ||
-    (evenCount === 2 && oddCount === 4)
+    k >= 4 ? Math.abs(evenCount - oddCount) <= maxParityDiff : Math.abs(evenCount - oddCount) <= 1
   );
 
-  // 3. Distribuição Espalhada (pelo menos 3 quadrantes contemplados - 84.1% dos concursos)
+  // 3. Distribuição Espalhada (pelo menos 3 quadrantes contemplados)
   const quadrants: [number, number, number, number] = [0, 0, 0, 0];
   sorted.forEach(n => {
     quadrants[getQuadrant(n)]++;
   });
   const populatedQuadrants = quadrants.filter(q => q > 0).length;
-  const quadrantsValid = !logic.spreadDistribution || (populatedQuadrants >= 3 && Math.max(...quadrants) <= 3);
+  const maxPerQuadrant = Math.max(3, Math.ceil(k / 2));
+  const quadrantsValid = !logic.spreadDistribution || (populatedQuadrants >= 3 && Math.max(...quadrants) <= maxPerQuadrant);
 
   // 4. Concentração no intervalo 20 a 50 (pelo menos 3 dezenas no miolo com maior incidência)
   const count20to50 = sorted.filter(n => n >= 20 && n <= 50).length;
@@ -191,7 +194,8 @@ export const validateGameAgainstRules = (
     });
   }
   const historical = evaluateHistoricalAlignment(sorted, customRankMap, customCountMap);
-  const historicalHotValid = !logic.preferHistoricalHotNumbers || (historical.top20Count >= 2 && historical.top20Count <= 4);
+  const maxTop20Cap = k >= 7 ? Math.min(k - 1, Math.ceil(k * 0.67)) : 4;
+  const historicalHotValid = !logic.preferHistoricalHotNumbers || (historical.top20Count >= 2 && historical.top20Count <= maxTop20Cap);
 
   // Métricas e regras da Análise Avançada
   const adv = evaluateAdvancedGameMetrics(sorted, analyticsOverride);
@@ -361,7 +365,8 @@ const getAdvancedWeightedCandidate = (
   rowCounts: number[],
   colCounts: number[],
   analyticsOverride?: MegaAnalyticsSnapshot,
-  portfolioContext?: PortfolioGenerationContext
+  portfolioContext?: PortfolioGenerationContext,
+  targetSize: number = 6
 ): number => {
   const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
   const pool: number[] = [];
@@ -459,16 +464,17 @@ const getAdvancedWeightedCandidate = (
 
     // 2. Par / Ímpar dinâmico
     const isEven = num % 2 === 0;
+    const halfTarget = Math.ceil(targetSize / 2);
     if (logic.balanceEvenOdd) {
-      if (currentEvens >= 3 && isEven) weight = Math.round(weight * 0.65);
-      if (currentEvens < 3 && !isEven) weight = Math.round(weight * 0.75);
+      if (currentEvens >= halfTarget && isEven) weight = Math.round(weight * 0.65);
+      if (currentEvens < Math.floor(targetSize / 2) && !isEven) weight = Math.round(weight * 0.75);
     }
 
     // 3. Moldura vs Centro dinâmico
     const isFrame = FRAME_NUMBERS.includes(num);
     if (logic.frameAndCenterBalance) {
-      if (currentFrame >= 3 && isFrame) weight = Math.round(weight * 0.60);
-      if (currentFrame < 3 && !isFrame) weight = Math.round(weight * 0.85);
+      if (currentFrame >= halfTarget && isFrame) weight = Math.round(weight * 0.60);
+      if (currentFrame < Math.floor(targetSize / 2) && !isFrame) weight = Math.round(weight * 0.85);
     }
 
     // 4. Linhas e Colunas dinâmicas (evita acumular 3 na mesma linha ou coluna)
@@ -691,7 +697,8 @@ export const generateGameWithRules = (
         rowCounts, 
         colCounts,
         analyticsOverride,
-        portfolioContext
+        portfolioContext,
+        quantity
       );
       candidates.add(candidate);
     }

@@ -203,6 +203,14 @@ export function analyzeGamePlausibility(
       });
     }
   } else {
+    const expectedBalancedText =
+      count === 6
+        ? '3P/3I, 4P/2I ou 2P/4I'
+        : count === 7
+        ? '4P/3I, 3P/4I, 5P/2I ou 2P/5I'
+        : 'Distribuição equilibrada entre pares e ímpares';
+    const maxBalancedDiff = count % 2 === 0 ? 2 : 3;
+
     if (evens === 0 || odds === 0) {
       score -= 35;
       criteria.push({
@@ -213,19 +221,19 @@ export function analyzeGamePlausibility(
         title: '100% Pares ou 100% Ímpares (Raridade Crítica)',
         description: 'Resultados 100% pares ou ímpares ocorreram em apenas 1,2% de toda a história oficial da Caixa.',
         observed: evens === 0 ? '100% Ímpares' : '100% Pares',
-        expected: '3P/3I, 4P/2I ou 2P/4I (81% dos sorteios)'
+        expected: expectedBalancedText
       });
-    } else if (evens === 1 || odds === 1) {
+    } else if (Math.abs(evens - odds) > maxBalancedDiff) {
       score -= 15;
       criteria.push({
         id: 'parity',
         name: 'Paridade (Pares / Ímpares)',
         status: 'warning',
         scoreImpact: -15,
-        title: 'Assimetria Leve (5P/1I ou 1P/5I)',
-        description: 'Ocorre em cerca de 8,8% dos concursos.',
+        title: `Assimetria Leve (${evens}P/${odds}I)`,
+        description: 'Combinação com predominância acentuada de pares ou ímpares.',
         observed: `${evens}P / ${odds}I`,
-        expected: '3P/3I, 4P/2I ou 2P/4I'
+        expected: expectedBalancedText
       });
     } else {
       criteria.push({
@@ -234,19 +242,20 @@ export function analyzeGamePlausibility(
         status: 'passed',
         scoreImpact: 0,
         title: 'Equilíbrio Bayesiano de Paridade',
-        description: 'Distribuição harmoniosa que contempla mais de 81% dos sorteios.',
+        description: 'Distribuição harmoniosa alinhada com os padrões históricos da Caixa.',
         observed: `${evens}P / ${odds}I`,
-        expected: '3P/3I, 4P/2I ou 2P/4I'
+        expected: expectedBalancedText
       });
     }
   }
 
   // 3. Critério da Curva de Gauss da Soma (Teorema Central do Limite)
   const sum = sorted.reduce((a, b) => a + b, 0);
-  const idealMin = isLoto ? 180 : (isMais ? 130 : 160);
-  const idealMax = isLoto ? 220 : (isMais ? 175 : 240);
-  const extremeMin = isLoto ? 150 : (isMais ? 100 : 120);
-  const extremeMax = isLoto ? 245 : (isMais ? 210 : 280);
+  const scaleFactor = !isLoto && count > 6 ? count / 6 : 1;
+  const idealMin = isLoto ? 180 : Math.round((isMais ? 130 : 160) * scaleFactor);
+  const idealMax = isLoto ? 220 : Math.round((isMais ? 175 : 240) * scaleFactor);
+  const extremeMin = isLoto ? 150 : Math.round((isMais ? 100 : 120) * scaleFactor);
+  const extremeMax = isLoto ? 245 : Math.round((isMais ? 210 : 280) * scaleFactor);
 
   if (sum < extremeMin || sum > extremeMax) {
     score -= 40;
@@ -256,7 +265,7 @@ export function analyzeGamePlausibility(
       status: 'violated',
       scoreImpact: -40,
       title: sum < extremeMin ? 'Soma Excessivamente Baixa (Cauda Extrema)' : 'Soma Excessivamente Alta (Cauda Extrema)',
-      description: `Uma aposta como 1+2+3+4+5+6 soma 21, ficando na cauda de 0,0001% da distribuição. A Caixa sorteia 80% dos prêmios na faixa central.`,
+      description: `A Caixa concentra a maior densidade probabilística na faixa central (${idealMin} a ${idealMax} pontos para ${count} dezenas).`,
       observed: `Soma: ${sum} pontos`,
       expected: `Faixa Central: ${idealMin} a ${idealMax} pontos`
     });
@@ -279,7 +288,7 @@ export function analyzeGamePlausibility(
       status: 'passed',
       scoreImpact: 0,
       title: 'Zona de Ouro da Soma (Centro da Gaussiana)',
-      description: `Soma perfeitamente centralizada no intervalo onde ocorrem mais de 78% dos resultados.`,
+      description: `Soma perfeitamente centralizada na faixa ideal (${idealMin} a ${idealMax}) para ${count} dezenas.`,
       observed: `Soma: ${sum} pontos`,
       expected: `${idealMin} a ${idealMax} pontos`
     });

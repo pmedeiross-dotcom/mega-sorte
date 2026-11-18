@@ -300,11 +300,15 @@ export function inspectTicketStructure(numbers: number[]): {
     decadeCounts[dec]++;
   }
 
-  const oddCount = sorted.length - evenCount;
-  const isBalancedParity =
-    (evenCount === 3 && oddCount === 3) ||
-    (evenCount === 2 && oddCount === 4) ||
-    (evenCount === 4 && oddCount === 2);
+  const k = Math.max(1, sorted.length);
+  const oddCount = k - evenCount;
+  const maxParityDiff = k % 2 === 0 ? 2 : 3;
+  const isBalancedParity = k >= 4
+    ? Math.abs(evenCount - oddCount) <= maxParityDiff
+    : Math.abs(evenCount - oddCount) <= 1;
+
+  const goldSumMin = k === 6 ? 160 : Math.round((160 * k) / 6);
+  const goldSumMax = k === 6 ? 240 : Math.round((240 * k) / 6);
 
   let distinctQuadrants = 0;
   let maxInQuadrant = 0;
@@ -345,7 +349,7 @@ export function inspectTicketStructure(numbers: number[]): {
 
   return {
     sum,
-    inGoldSumBand: sum >= 160 && sum <= 240,
+    inGoldSumBand: sum >= goldSumMin && sum <= goldSumMax,
     evenCount,
     oddCount,
     isBalancedParity,
@@ -529,24 +533,29 @@ export function evaluateHybridCandidateScore(params: {
   // Análise estrutural do candidato (itens 4, 5, 6 e 7)
   const st = inspectTicketStructure(candidate);
 
-  // 4. Adequação da soma (160–240 como preferência estatística SUAVE, não eliminatória)
+  // 4. Adequação da soma (160–240 para 6 dez., proporcional para 7+ dez., como preferência SUAVE)
+  const goldMin = k === 6 ? 160 : Math.round((160 * k) / 6);
+  const goldMax = k === 6 ? 240 : Math.round((240 * k) / 6);
+  const goldCenter = k === 6 ? 190 : Math.round((190 * k) / 6);
+  const goldSpan = k === 6 ? 60 : Math.max(60, Math.round((60 * k) / 6));
   let sumScore = 0;
-  if (st.sum >= 160 && st.sum <= 240) {
-    // Pico suave perto do centro histórico (~183–200)
-    const distFromCenter = Math.abs(st.sum - 190);
-    sumScore = weights.sumSoftBonus * (1 - (distFromCenter / 60) * 0.25);
+  if (st.sum >= goldMin && st.sum <= goldMax) {
+    // Pico suave perto do centro histórico (~183–200 em 6 dezenas; ~222 em 7 dezenas)
+    const distFromCenter = Math.abs(st.sum - goldCenter);
+    sumScore = weights.sumSoftBonus * (1 - (distFromCenter / goldSpan) * 0.25);
   } else {
-    const excess = st.sum < 160 ? 160 - st.sum : st.sum - 240;
+    const excess = st.sum < goldMin ? goldMin - st.sum : st.sum - goldMax;
     sumScore = -Math.min(weights.sumSoftBonus * 2.2, excess * weights.sumSoftSlopePenalty);
   }
 
-  // 5. Equilíbrio de paridade (3P/3I > 2P/4I ou 4P/2I; extremos recebem penalidade suave)
+  // 5. Equilíbrio de paridade (para 6 dez.: 3P/3I > 2P/4I ou 4P/2I; para 7 dez.: 4P/3I ou 3P/4I > 5P/2I ou 2P/5I)
+  const parityDiff = Math.abs(st.evenCount - st.oddCount);
   let parityScore = 0;
-  if (st.evenCount === 3 && st.oddCount === 3) {
+  if (parityDiff <= 1) {
     parityScore = weights.parityBalanceBonus;
   } else if (st.isBalancedParity) {
     parityScore = weights.parityBalanceBonus * 0.72;
-  } else if (st.evenCount === 1 || st.evenCount === 5) {
+  } else if (st.evenCount === 1 || st.oddCount === 1) {
     parityScore = -weights.parityExtremePenalty;
   } else {
     parityScore = -weights.parityExtremePenalty * 1.8;
@@ -562,8 +571,8 @@ export function evaluateHybridCandidateScore(params: {
   else if (st.distinctDecades === 4) spatialScore += weights.decadeDispersionBonus * 0.6;
   else if (st.distinctDecades <= 2) spatialScore -= weights.regionConcentrationPenalty * 0.8;
 
-  if (st.maxInQuadrant >= 4) spatialScore -= weights.regionConcentrationPenalty;
-  if (st.maxInDecade >= 3) spatialScore -= weights.regionConcentrationPenalty * 0.7;
+  if (st.maxInQuadrant >= (k >= 8 ? 5 : 4)) spatialScore -= weights.regionConcentrationPenalty;
+  if (st.maxInDecade >= (k >= 7 ? 4 : 3)) spatialScore -= weights.regionConcentrationPenalty * 0.7;
 
   // 7. Penalização progressiva por sequências consecutivas (não eliminatória)
   const consecutivePenalty =
@@ -575,17 +584,19 @@ export function evaluateHybridCandidateScore(params: {
   let redundancyCost = 0;
   if (existingMasks.length > 0 && maxNum <= 60) {
     const [cLo, cHi] = encodeMask60(candidate);
+    const highOverlapThreshold = k === 6 ? 4 : Math.max(4, Math.ceil(k * 0.65));
+    const midOverlapThreshold = highOverlapThreshold - 1;
     let maxOverlap = 0;
     let highOverlapCount = 0;
     for (let i = 0; i < existingMasks.length; i++) {
       const m = existingMasks[i];
       const overlap = popcount32(cLo & m[0]) + popcount32(cHi & m[1]);
       if (overlap > maxOverlap) maxOverlap = overlap;
-      if (overlap >= 4) highOverlapCount++;
+      if (overlap >= highOverlapThreshold) highOverlapCount++;
     }
-    if (maxOverlap >= 4) {
-      redundancyCost = weights.redundancyOverlapPenalty * (maxOverlap - 2.5) + highOverlapCount * 4;
-    } else if (maxOverlap === 3) {
+    if (maxOverlap >= highOverlapThreshold) {
+      redundancyCost = weights.redundancyOverlapPenalty * (maxOverlap - (highOverlapThreshold - 1.5)) + highOverlapCount * 4;
+    } else if (maxOverlap === midOverlapThreshold) {
       redundancyCost = weights.redundancyOverlapPenalty * 0.35;
     }
   }

@@ -22,7 +22,7 @@ import {
   runThreeWayPairedBenchmark,
   wilsonConfidenceInterval
 } from '../utils/hybridBenchmarkEngine';
-import { generatePortfolioWithRules } from '../utils/lotteryRules';
+import { generatePortfolioWithRules, validateGameAgainstRules, autoOptimizeGameNumbers } from '../utils/lotteryRules';
 import { STRATEGY_CATALOG } from '../utils/strategyCatalog';
 import { getQuadrant } from '../utils/megaSenaOfficialStats';
 import { CalculationStrategy, GeneratorLogic } from '../types';
@@ -383,5 +383,37 @@ describe('Estratégia Híbrida de Cobertura Combinatória', () => {
     assert.equal(res.hasAny3Plus, true);
     assert.equal(res.hasAny4Plus, true);
     assert.equal(res.maxHitsInPortfolio, 6);
+  });
+
+  it('18. Gera carteiras e jogos individuais válidos de 7 dezenas com regras e pontuação escaladas', () => {
+    const hybrid7 = generateHybridCoveragePortfolio({
+      portfolioSize: 20,
+      betSize: 7,
+      maxNum: 60,
+      seed: 707070,
+      candidatesPerTicket: 180
+    });
+    assert.equal(hybrid7.games.length, 20);
+    assert.equal(hybrid7.betSize, 7);
+    assert.equal(hybrid7.coverage.distinctGames, 20);
+    for (const g of hybrid7.games) {
+      assert.equal(g.length, 7);
+      assert.equal(new Set(g).size, 7);
+    }
+
+    const single7 = generateHybridSingleGame({ betSize: 7, seed: 777 });
+    assert.equal(single7.numbers.length, 7);
+    const val7 = validateGameAgainstRules([4, 13, 22, 31, 40, 49, 58], BASE_LOGIC);
+    assert.equal(val7.sum, 217);
+    assert.equal(val7.sumValid, true);
+    assert.equal(val7.evenOddValid, true);
+
+    const opt7 = autoOptimizeGameNumbers([1, 3, 5, 7], 7);
+    assert.equal(opt7.optimizedNumbers.length, 7);
+    assert.equal(new Set(opt7.optimizedNumbers).size, 7);
+
+    const classic7 = generatePortfolioWithRules(6, 7, { ...BASE_LOGIC, calculationStrategy: 'balanced' });
+    assert.equal(classic7.games.length, 6);
+    assert.ok(classic7.games.every(g => g.numbers.length === 7));
   });
 });
