@@ -5,6 +5,7 @@
  */
 
 import { isGamePlausible } from './plausibilityFilter';
+import type { PortfolioStructuralMetrics } from './hybridCoverageStrategy';
 
 export interface PortfolioCoverageMetrics {
   totalGames: number;
@@ -50,7 +51,10 @@ export interface ProspectiveAuditEntry {
   targetContest: number;
   createdAt: number;
   strategyLabel: string;
-  strategyKey: 'combinatorial_cover' | 'combinatorial_plausible' | 'classic_dedup';
+  strategyKey: 'combinatorial_cover' | 'combinatorial_plausible' | 'classic_dedup' | 'hybrid_combinatorial';
+  seed?: number;
+  randomSeed?: number;
+  hashVersion?: 1 | 2;
   ticketCount: number;
   betSize: number;
   ticketPrice: number;
@@ -62,6 +66,7 @@ export interface ProspectiveAuditEntry {
   isSyntheticTest?: boolean;
   optimizedCoverage: PortfolioCoverageMetrics;
   randomCoverage: PortfolioCoverageMetrics;
+  structuralMetrics?: PortfolioStructuralMetrics;
   officialDraw?: {
     contestNumber: number;
     date: string;
@@ -70,6 +75,11 @@ export interface ProspectiveAuditEntry {
   };
   optimizedEval?: PortfolioDrawEvaluation;
   randomEval?: PortfolioDrawEvaluation;
+  realPrizes?: {
+    optimizedPrizeTotal?: number;
+    randomPrizeTotal?: number;
+    note?: string;
+  };
 }
 
 function combinationsCount(n: number, k: number): number {
@@ -106,10 +116,14 @@ export function ticketKey(nums: number[]): string {
   return [...nums].sort((a, b) => a - b).join('-');
 }
 
-export function drawRandomTicket(betSize: number = 6, maxNum: number = 60): number[] {
+export function drawRandomTicket(
+  betSize: number = 6,
+  maxNum: number = 60,
+  randFn: () => number = Math.random
+): number[] {
   const pool = Array.from({ length: maxNum }, (_, i) => i + 1);
   for (let i = 0; i < betSize; i++) {
-    const j = i + Math.floor(Math.random() * (maxNum - i));
+    const j = i + Math.floor(randFn() * (maxNum - i));
     const tmp = pool[i];
     pool[i] = pool[j];
     pool[j] = tmp;
@@ -123,7 +137,8 @@ export function drawRandomTicket(betSize: number = 6, maxNum: number = 60): numb
 export function generateRandomDistinctPortfolio(
   portfolioSize: number,
   betSize: number = 6,
-  maxNum: number = 60
+  maxNum: number = 60,
+  randFn: () => number = Math.random
 ): number[][] {
   const seen = new Set<string>();
   const games: number[][] = [];
@@ -132,7 +147,7 @@ export function generateRandomDistinctPortfolio(
 
   while (games.length < safeSize && guard < safeSize * 40) {
     guard++;
-    const combo = drawRandomTicket(betSize, maxNum);
+    const combo = drawRandomTicket(betSize, maxNum, randFn);
     const key = combo.join('-');
     if (!seen.has(key)) {
       seen.add(key);
@@ -469,6 +484,9 @@ export async function computeCommitmentHash(payload: {
   createdAt: number;
   optimizedGames: number[][];
   randomBaselineGames: number[][];
+  strategyKey?: string;
+  seed?: number;
+  randomSeed?: number;
 }): Promise<string> {
   const canonical = JSON.stringify(payload);
   try {
@@ -490,6 +508,32 @@ export async function computeCommitmentHash(payload: {
     h2 = Math.imul(h2 ^ (ch + i), 0x85ebca6b) >>> 0;
   }
   return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`.repeat(4);
+}
+
+/**
+ * Verifica se o hash de compromisso SHA-256 armazenado em uma entrada prospectiva
+ * corresponde exatamente aos jogos, concurso, timestamp e seed registrados.
+ */
+export async function verifyCommitmentHash(entry: ProspectiveAuditEntry): Promise<boolean> {
+  const payload =
+    entry.hashVersion === 2
+      ? {
+          targetContest: entry.targetContest,
+          createdAt: entry.createdAt,
+          optimizedGames: entry.optimizedGames,
+          randomBaselineGames: entry.randomBaselineGames,
+          strategyKey: entry.strategyKey,
+          seed: entry.seed,
+          randomSeed: entry.randomSeed
+        }
+      : {
+          targetContest: entry.targetContest,
+          createdAt: entry.createdAt,
+          optimizedGames: entry.optimizedGames,
+          randomBaselineGames: entry.randomBaselineGames
+        };
+  const recomputed = await computeCommitmentHash(payload);
+  return recomputed === entry.commitmentHash;
 }
 
 /**

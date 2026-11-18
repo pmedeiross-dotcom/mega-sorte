@@ -373,6 +373,18 @@ export function calibrateStrategyAgainstHistory(params: {
       }
     },
     {
+      label: 'Estratégia Híbrida (Pares/Trincas + Equilíbrio Suave)',
+      strategy: 'hybrid_combinatorial',
+      overrides: {
+        strictPlausibilityFilter: false,
+        useAdvancedDuques: false,
+        paretoTopSelection: false,
+        preferHistoricalHotNumbers: false,
+        includeCycleDezenas: false,
+        repeat1to2: false
+      }
+    },
+    {
       label: 'Padrão Ouro + Plausibilidade Estrita',
       strategy: 'balanced',
       overrides: {

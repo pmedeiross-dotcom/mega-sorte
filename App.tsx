@@ -24,6 +24,8 @@ import {
   SlidersHorizontal,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   HelpCircle,
   Eye,
   Calculator,
@@ -85,7 +87,9 @@ import { offlineCacheManager } from './services/offlineCacheManager';
 import { 
   getStoredLatestOfficialDraw, 
   saveStoredLatestOfficialDraw, 
-  fetchLatestOfficialDraw 
+  fetchLatestOfficialDraw,
+  computeNextOfficialDrawDate,
+  formatBrDateWithWeekday
 } from './services/lotteryApi';
 import { jsPDF } from 'jspdf';
 import { testConnection } from './firebase';
@@ -113,6 +117,7 @@ const App: React.FC = () => {
   const [latestMaisMilionariaDraw, setLatestMaisMilionariaDraw] = useState<OfficialDrawResult>(() => ({
     contestNumber: LATEST_MAIS_MILIONARIA_DRAW.contest,
     date: LATEST_MAIS_MILIONARIA_DRAW.date,
+    nextContestDate: computeNextOfficialDrawDate(LATEST_MAIS_MILIONARIA_DRAW.date, 'maismilionaria'),
     numbers: LATEST_MAIS_MILIONARIA_DRAW.numbers,
     trevos: LATEST_MAIS_MILIONARIA_DRAW.trevos || [1, 2],
     accumulated: true,
@@ -126,6 +131,7 @@ const App: React.FC = () => {
   const [latestLotofacilDraw, setLatestLotofacilDraw] = useState<OfficialDrawResult>(() => ({
     contestNumber: LATEST_LOTOFACIL_DRAW.contest,
     date: LATEST_LOTOFACIL_DRAW.date,
+    nextContestDate: computeNextOfficialDrawDate(LATEST_LOTOFACIL_DRAW.date, 'lotofacil'),
     numbers: LATEST_LOTOFACIL_DRAW.numbers,
     accumulated: false,
     estimatedNextPrize: "R$ 1.700.000,00",
@@ -257,9 +263,13 @@ const App: React.FC = () => {
     distinctNumbers: number;
     uniquePairs: number;
     pairCoveragePct: number;
+    uniqueTriples?: number;
+    tripleCoveragePct?: number;
     giniCoefficient: number;
     maxFreq?: number;
     subPoolSize?: number;
+    seedUsed?: number;
+    pctSum160to240?: number;
   } | null>(null);
 
   // Sorteios de referência de conferência independentes para Mega-Sena, +Milionária e Lotofácil
@@ -279,6 +289,7 @@ const App: React.FC = () => {
 
   const [selectedCheckerContest, setSelectedCheckerContest] = useState<number | 'custom'>(activeOfficialDraw.contestNumber);
   const [checkerFilterScope, setCheckerFilterScope] = useState<'selected_contest' | 'all_past'>('selected_contest');
+  const [isCyclingHighlights, setIsCyclingHighlights] = useState(false);
 
   // Sincroniza inputs ao mudar de perfil de loteria
   useEffect(() => {
@@ -305,6 +316,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     setCheckerHitsFilter('all');
+    setIsCyclingHighlights(false);
     setSelectedCheckerContest(
       currentLottery === 'lotofacil'
         ? latestLotofacilDraw.contestNumber
@@ -462,6 +474,8 @@ const App: React.FC = () => {
   };
 
   const handleRestoreOfficialDrawInChecker = () => {
+    setCheckerFilterScope('selected_contest');
+    setIsCyclingHighlights(false);
     if (currentLottery === 'lotofacil') {
       setLotofacilRefDraw(latestLotofacilDraw.numbers);
       setTempRefInput(latestLotofacilDraw.numbers.join(', '));
@@ -746,7 +760,7 @@ const App: React.FC = () => {
       try {
         const size = Math.max(2, Math.min(200, portfolioBatchSize || 78));
         if (currentLottery === 'megasena') {
-          const { games, coverage } = generatePortfolioWithRules(size, betCount, logicOptions, latestOfficialDraw.numbers);
+          const { games, coverage, seedUsed, structuralMetrics } = generatePortfolioWithRules(size, betCount, logicOptions, latestOfficialDraw.numbers);
           saveBetsBatch(
             games.map(g => ({
               type: 'smart_rules',
@@ -755,22 +769,29 @@ const App: React.FC = () => {
               advancedMetrics: g.advancedMetrics
             }))
           );
-          const subPoolUsed = logicOptions.calculationStrategy === 'combinatorial_cover'
-            ? (logicOptions.portfolioSubPoolSize ?? 60)
-            : 60;
+          const subPoolUsed =
+            logicOptions.calculationStrategy === 'combinatorial_cover' ||
+            logicOptions.calculationStrategy === 'hybrid_combinatorial'
+              ? (logicOptions.portfolioSubPoolSize ?? 60)
+              : 60;
           setLastBatchCoverage({
             totalGames: coverage.totalGames,
             distinctGames: coverage.distinctGames,
             distinctNumbers: coverage.distinctNumbers,
             uniquePairs: coverage.uniquePairs,
             pairCoveragePct: coverage.pairCoveragePct,
+            uniqueTriples: coverage.uniqueTriples,
+            tripleCoveragePct: coverage.tripleCoveragePct,
             giniCoefficient: coverage.giniCoefficient,
             maxFreq: coverage.maxFreq,
-            subPoolSize: subPoolUsed
+            subPoolSize: subPoolUsed,
+            seedUsed,
+            pctSum160to240: structuralMetrics?.pctSum160to240
           });
           if (games.length > 0) setSelectedNumbers(games[0].numbers);
+          const seedTag = seedUsed !== undefined ? ` • Seed ${seedUsed}` : '';
           showToast(
-            `Carteira de ${coverage.distinctGames}/${size} jogos distintos salva (${coverage.distinctNumbers}/${subPoolUsed} dez. • máx. ${coverage.maxFreq}x/dez. • ${coverage.pairCoveragePct.toFixed(1)}% pares únicos)!`,
+            `Carteira de ${coverage.distinctGames}/${size} jogos distintos salva (${coverage.distinctNumbers}/${subPoolUsed} dez. • ${coverage.pairCoveragePct.toFixed(1)}% pares • ${coverage.uniqueTriples} trincas${seedTag})!`,
             'success'
           );
         } else {
@@ -1306,7 +1327,7 @@ const App: React.FC = () => {
     );
   }, [selectedCheckerContest, pastContestsForChecker, activeOfficialDraw]);
 
-  const handleSelectPastContestInChecker = (contestNumber: number) => {
+  const handleSelectPastContestInChecker = (contestNumber: number, keepCycling = false) => {
     const draw = pastContestsForChecker.find(d => d.contest === contestNumber);
     if (!draw) return;
 
@@ -1324,6 +1345,8 @@ const App: React.FC = () => {
       setTempRefInput(draw.numbers.join(', '));
     }
     setSelectedCheckerContest(contestNumber);
+    setCheckerFilterScope('selected_contest');
+    if (!keepCycling) setIsCyclingHighlights(false);
     setIsCustomizingRef(false);
     showToast(`Conferindo apostas com o Concurso #${draw.contest} (${draw.date})`, 'success');
   };
@@ -1341,6 +1364,16 @@ const App: React.FC = () => {
       trevoSet: d.trevos ? new Set(d.trevos) : null
     }));
 
+    const contestStatsMap = new Map<number, { contest: number; date: string; maxHits: number; notableCount: number }>();
+    preparedDraws.forEach(({ draw }) => {
+      contestStatsMap.set(draw.contest, {
+        contest: draw.contest,
+        date: draw.date,
+        maxHits: 0,
+        notableCount: 0
+      });
+    });
+
     let overallBest: { bet: Bet; match: PastContestMatch } | null = null;
     let betsWithMidOrHigher = 0;
     let betsWithHighTier = 0;
@@ -1353,6 +1386,12 @@ const App: React.FC = () => {
         const matchedNumbers = bet.numbers.filter(n => numSet.has(n));
         const hits = matchedNumbers.length;
         countsByTier[hits] = (countsByTier[hits] || 0) + 1;
+
+        const cStat = contestStatsMap.get(draw.contest);
+        if (cStat) {
+          if (hits > cStat.maxHits) cStat.maxHits = hits;
+          if (hits >= minNotable) cStat.notableCount += 1;
+        }
 
         let trevosHits: number | undefined;
         let matchedTrevos: number[] | undefined;
@@ -1402,9 +1441,18 @@ const App: React.FC = () => {
       });
     });
 
+    const rankedContests = Array.from(contestStatsMap.values())
+      .filter(c => c.maxHits > 0)
+      .sort((a, b) => {
+        if (b.maxHits !== a.maxHits) return b.maxHits - a.maxHits;
+        if (b.notableCount !== a.notableCount) return b.notableCount - a.notableCount;
+        return b.contest - a.contest;
+      });
+
     return {
       map,
       overallBest,
+      rankedContests,
       betsWithMidOrHigher,
       betsWithHighTier,
       totalBets: relevantBets.length
@@ -1905,10 +1953,19 @@ const App: React.FC = () => {
                           : (currentLottery === 'maismilionaria' ? '+Milionária (01 a 50 + Trevos)' : 'Mega-Sena (01 a 60)')}
                       </span>
                     </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {currentLottery === 'lotofacil'
-                        ? 'Toque para marcar suas 15 dezenas (Moldura em destaque) ou use os geradores estatísticos'
-                        : 'Toque para marcar suas dezenas ou use os geradores inteligentes'}
+                    <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span>
+                        {currentLottery === 'lotofacil'
+                          ? 'Toque para marcar suas 15 dezenas (Moldura em destaque) ou use os geradores estatísticos'
+                          : 'Toque para marcar suas dezenas ou use os geradores inteligentes'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                        Próx. sorteio #{activeOfficialDraw.contestNumber + 1}:{' '}
+                        {formatBrDateWithWeekday(
+                          activeOfficialDraw.nextContestDate ||
+                            computeNextOfficialDrawDate(activeOfficialDraw.date, currentLottery)
+                        ) || 'Em breve'}
+                      </span>
                     </p>
                   </div>
 
@@ -2626,7 +2683,7 @@ const App: React.FC = () => {
                       <div>
                         <h3 className="text-sm sm:text-base font-black tracking-tight">Central de Geração de Jogos</h3>
                         <p className="text-[11px] text-white/80 font-medium">
-                          {currentLottery === 'lotofacil' ? 'Lotofácil' : currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena'} · Base #{activeOfficialDraw.contestNumber}
+                          {currentLottery === 'lotofacil' ? 'Lotofácil' : currentLottery === 'maismilionaria' ? '+Milionária' : 'Mega-Sena'} · Próx. #{activeOfficialDraw.contestNumber + 1} ({formatBrDateWithWeekday(activeOfficialDraw.nextContestDate || computeNextOfficialDrawDate(activeOfficialDraw.date, currentLottery)) || 'Em breve'})
                         </p>
                       </div>
                     </div>
@@ -2720,7 +2777,7 @@ const App: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* 2 Estratégias Principais */}
+                        {/* Estratégias Principais: 2 colunas + Botão Dedicado Estratégia Híbrida */}
                         <div className="grid grid-cols-2 gap-1.5">
                           {(['combinatorial_cover', 'balanced'] as const).map(id => {
                             const meta = STRATEGY_CATALOG[id];
@@ -2746,6 +2803,97 @@ const App: React.FC = () => {
                             );
                           })}
                         </div>
+
+                        {/* Botão Dedicado em Destaque: Estratégia Híbrida */}
+                        <button
+                          type="button"
+                          onClick={() => setLogicOptions(prev => ({ ...prev, calculationStrategy: 'hybrid_combinatorial' }))}
+                          className={`w-full p-3 rounded-xl text-left border transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                            activeStrategy === 'hybrid_combinatorial'
+                              ? 'border-cyan-600 bg-gradient-to-r from-cyan-600 to-teal-700 text-white shadow-md ring-2 ring-cyan-400/50'
+                              : 'border-cyan-300 bg-cyan-50/70 hover:bg-cyan-100/80 text-cyan-950'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-black text-xs sm:text-[13px]">🧬 Estratégia Híbrida</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                                activeStrategy === 'hybrid_combinatorial'
+                                  ? 'bg-white/20 text-white'
+                                  : 'bg-cyan-200/80 text-cyan-900'
+                              }`}>
+                                Pares + Trincas
+                              </span>
+                            </div>
+                            <p className={`text-[10px] leading-tight mt-0.5 ${
+                              activeStrategy === 'hybrid_combinatorial' ? 'text-cyan-50' : 'text-cyan-800'
+                            }`}>
+                              Cobertura combinatória + equilíbrio suave (Soma 160–240, Paridade, Quadrantes &amp; Seed)
+                            </p>
+                          </div>
+                          {activeStrategy === 'hybrid_combinatorial' && (
+                            <Check size={16} className="text-white shrink-0" />
+                          )}
+                        </button>
+
+                        {/* Configuração da Estratégia Híbrida (Seed determinística + Pós-Otimização opcional) */}
+                        {currentLottery === 'megasena' && activeStrategy === 'hybrid_combinatorial' && (
+                          <div className="p-2.5 rounded-xl bg-cyan-50/70 border border-cyan-200 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-black text-cyan-950 uppercase tracking-wide">
+                                Seed Determinística (Reprodutibilidade)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setLogicOptions(prev => ({
+                                    ...prev,
+                                    portfolioSeed: Math.floor(100000 + Math.random() * 899999)
+                                  }))
+                                }
+                                className="text-[10px] font-black text-cyan-800 hover:text-cyan-950 underline cursor-pointer"
+                              >
+                                Gerar Nova Seed
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                placeholder="Automática (armazenada na carteira)"
+                                value={logicOptions.portfolioSeed ?? ''}
+                                onChange={e => {
+                                  const val = e.target.value.trim();
+                                  setLogicOptions(prev => ({
+                                    ...prev,
+                                    portfolioSeed: val === '' ? undefined : Math.max(1, Math.trunc(Number(val) || 1))
+                                  }));
+                                }}
+                                className="flex-1 px-2.5 py-1.5 rounded-lg border border-cyan-200 bg-white text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                              />
+                              {logicOptions.portfolioSeed !== undefined && (
+                                <button
+                                  type="button"
+                                  onClick={() => setLogicOptions(prev => ({ ...prev, portfolioSeed: undefined }))}
+                                  className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-white border border-cyan-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  Auto
+                                </button>
+                              )}
+                            </div>
+                            <label className="flex items-center gap-2 text-[10px] font-bold text-cyan-900 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(logicOptions.hybridPostOptimization)}
+                                onChange={e =>
+                                  setLogicOptions(prev => ({ ...prev, hybridPostOptimization: e.target.checked }))
+                                }
+                                className="rounded text-cyan-700 focus:ring-cyan-500 w-3.5 h-3.5"
+                              />
+                              <span>Ativar Etapa 2: Refinamento por Busca Local (Pares/Trincas)</span>
+                            </label>
+                          </div>
+                        )}
 
                         {/* Perfil Combinatório Auditado (visível quando Mega-Sena + Carteira + Anti-Colisão) */}
                         {generationModeTab === 'portfolio' && currentLottery === 'megasena' && activeStrategy === 'combinatorial_cover' && (
@@ -2896,10 +3044,18 @@ const App: React.FC = () => {
                         type="button"
                         onClick={handleGeneratePortfolioBatch}
                         disabled={isRuleGenerating}
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer disabled:opacity-50"
+                        className={`w-full text-white py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm transition-all flex items-center justify-center space-x-2 shadow-md active:scale-[0.99] cursor-pointer disabled:opacity-50 ${
+                          logicOptions.calculationStrategy === 'hybrid_combinatorial'
+                            ? 'bg-cyan-700 hover:bg-cyan-800'
+                            : 'bg-slate-900 hover:bg-slate-800'
+                        }`}
                       >
-                        <Layers size={16} className="text-emerald-400" />
-                        <span>GERAR CARTEIRA DE {portfolioBatchSize} JOGOS ÚNICOS</span>
+                        <Layers size={16} className={logicOptions.calculationStrategy === 'hybrid_combinatorial' ? 'text-cyan-200' : 'text-emerald-400'} />
+                        <span>
+                          {logicOptions.calculationStrategy === 'hybrid_combinatorial'
+                            ? `GERAR ${portfolioBatchSize} JOGOS — ESTRATÉGIA HÍBRIDA`
+                            : `GERAR CARTEIRA DE ${portfolioBatchSize} JOGOS ÚNICOS`}
+                        </span>
                       </button>
 
                       {lastBatchCoverage && (
@@ -2915,6 +3071,21 @@ const App: React.FC = () => {
                               {typeof lastBatchCoverage.maxFreq === 'number' ? <> · Máx: <strong>{lastBatchCoverage.maxFreq}x</strong></> : null}
                             </span>
                           </div>
+                          {(lastBatchCoverage.uniqueTriples !== undefined || lastBatchCoverage.seedUsed !== undefined) && (
+                            <div className="flex justify-between text-emerald-800 pt-0.5 border-t border-emerald-200/70">
+                              <span>
+                                Trincas: <strong>{lastBatchCoverage.uniqueTriples ?? 0}</strong>
+                                {lastBatchCoverage.tripleCoveragePct !== undefined ? ` (${lastBatchCoverage.tripleCoveragePct.toFixed(2)}%)` : ''}
+                              </span>
+                              <span>
+                                {lastBatchCoverage.seedUsed !== undefined ? (
+                                  <>Seed: <strong className="font-mono">{lastBatchCoverage.seedUsed}</strong></>
+                                ) : lastBatchCoverage.pctSum160to240 !== undefined ? (
+                                  <>Soma 160–240: <strong>{lastBatchCoverage.pctSum160to240.toFixed(0)}%</strong></>
+                                ) : null}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -4119,40 +4290,106 @@ const App: React.FC = () => {
             )}
 
             {/* Resumo Automático em Jogos Passados */}
-            {betPastComparisons.totalBets > 0 && betPastComparisons.overallBest && (
-              <div className="p-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-emerald-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                      <History size={15} className="text-emerald-600" />
-                      Comparação Geral com {pastContestsForChecker.length} Jogos Passados
-                    </span>
-                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                      {betPastComparisons.betsWithMidOrHigher} de {betPastComparisons.totalBets} apostas com {currentLottery === 'lotofacil' ? '11+' : '3+'} dezenas
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-600">
-                    Maior pontuação histórica entre suas apostas salvas:{' '}
-                    <strong className="text-slate-900">
-                      Concurso #{betPastComparisons.overallBest.match.contest} ({betPastComparisons.overallBest.match.date}) — {betPastComparisons.overallBest.match.hits} {betPastComparisons.overallBest.match.hits === 1 ? 'dezena' : 'dezenas'}
-                    </strong>
-                    {betPastComparisons.overallBest.match.matchedNumbers.length > 0 && (
-                      <span className="font-mono text-slate-700 ml-1">
-                        ({betPastComparisons.overallBest.match.matchedNumbers.map(n => n.toString().padStart(2, '0')).join(' - ')})
-                      </span>
-                    )}
-                  </p>
-                </div>
+            {betPastComparisons.totalBets > 0 && betPastComparisons.overallBest && (() => {
+              const bestContestNum = betPastComparisons.overallBest!.match.contest;
+              const isViewingBest = selectedCheckerContest === bestContestNum;
+              const currentIdx = typeof selectedCheckerContest === 'number'
+                ? pastContestsForChecker.findIndex(d => d.contest === selectedCheckerContest)
+                : -1;
+              const olderContest =
+                currentIdx >= 0 && currentIdx + 1 < pastContestsForChecker.length
+                  ? pastContestsForChecker[currentIdx + 1]
+                  : (currentIdx === -1 && pastContestsForChecker.length > 1 ? pastContestsForChecker[1] : null);
+              const newerContest =
+                currentIdx > 0
+                  ? pastContestsForChecker[currentIdx - 1]
+                  : (currentIdx === -1 && pastContestsForChecker.length > 0 ? pastContestsForChecker[0] : null);
 
-                <button
-                  type="button"
-                  onClick={() => handleSelectPastContestInChecker(betPastComparisons.overallBest!.match.contest)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black transition-colors cursor-pointer shrink-0"
-                >
-                  Conferir Concurso #{betPastComparisons.overallBest.match.contest}
-                </button>
-              </div>
-            )}
+              const ranked = betPastComparisons.rankedContests;
+              const rankedIdx = typeof selectedCheckerContest === 'number'
+                ? ranked.findIndex(c => c.contest === selectedCheckerContest)
+                : -1;
+              const nextHighlightContest =
+                ranked.length > 1
+                  ? ranked[(rankedIdx >= 0 ? rankedIdx + 1 : 0) % ranked.length]
+                  : null;
+              const shouldAdvanceCycle = (isViewingBest || isCyclingHighlights) && !!nextHighlightContest;
+              const targetActionContest = shouldAdvanceCycle && nextHighlightContest
+                ? nextHighlightContest.contest
+                : bestContestNum;
+
+              return (
+                <div className="p-4 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-emerald-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                        <History size={15} className="text-emerald-600" />
+                        Comparação Geral com {pastContestsForChecker.length} Jogos Passados
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        {betPastComparisons.betsWithMidOrHigher} de {betPastComparisons.totalBets} apostas com {currentLottery === 'lotofacil' ? '11+' : '3+'} dezenas
+                      </span>
+                      {typeof selectedCheckerContest === 'number' && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900 text-white">
+                          Conferindo #{selectedCheckerContest}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600">
+                      Maior pontuação histórica entre suas apostas salvas:{' '}
+                      <strong className="text-slate-900">
+                        Concurso #{bestContestNum} ({betPastComparisons.overallBest.match.date}) — {betPastComparisons.overallBest.match.hits} {betPastComparisons.overallBest.match.hits === 1 ? 'dezena' : 'dezenas'}
+                      </strong>
+                      {betPastComparisons.overallBest.match.matchedNumbers.length > 0 && (
+                        <span className="font-mono text-slate-700 ml-1">
+                          ({betPastComparisons.overallBest.match.matchedNumbers.map(n => n.toString().padStart(2, '0')).join(' - ')})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {/* Navegação direta entre concursos (Anterior / Atual / Próximo) */}
+                    <div className="inline-flex items-center rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+                      <button
+                        type="button"
+                        disabled={!olderContest}
+                        onClick={() => olderContest && handleSelectPastContestInChecker(olderContest.contest)}
+                        title={olderContest ? `Concurso anterior #${olderContest.contest} (${olderContest.date})` : 'Início do arquivo'}
+                        className="px-2.5 py-2 text-slate-700 hover:bg-slate-100 disabled:opacity-35 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <span className="px-2.5 py-1 text-[11px] font-black text-slate-800 border-x border-slate-200 min-w-[74px] text-center">
+                        {selectedCheckerContest === 'custom' ? 'Manual' : `#${selectedCheckerContest}`}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={!newerContest}
+                        onClick={() => newerContest && handleSelectPastContestInChecker(newerContest.contest)}
+                        title={newerContest ? `Próximo concurso #${newerContest.contest} (${newerContest.date})` : 'Concurso mais recente'}
+                        className="px-2.5 py-2 text-slate-700 hover:bg-slate-100 disabled:opacity-35 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCyclingHighlights(true);
+                        handleSelectPastContestInChecker(targetActionContest, true);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black transition-colors cursor-pointer shrink-0"
+                    >
+                      {shouldAdvanceCycle && nextHighlightContest
+                        ? `Próximo Destaque #${nextHighlightContest.contest} (${nextHighlightContest.maxHits} ac.)`
+                        : `Conferir Concurso #${bestContestNum}`}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Gráfico de Visualização de Dados (Recharts) */}
             <FrequencyChart 

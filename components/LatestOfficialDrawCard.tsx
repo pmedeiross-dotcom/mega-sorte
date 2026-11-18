@@ -15,6 +15,7 @@ import {
   Clover
 } from 'lucide-react';
 import { OfficialDrawResult, LotteryType } from '../types';
+import { computeNextOfficialDrawDate, formatBrDateWithWeekday } from '../services/lotteryApi';
 
 interface LatestOfficialDrawCardProps {
   latestDraw: OfficialDrawResult;
@@ -28,13 +29,13 @@ interface LatestOfficialDrawCardProps {
 
 export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
   latestDraw,
-  lottery = 'megasena',
+  lottery = 'megasena' as LotteryType,
   onRefresh,
   onUpdateDraw,
   onCheckMyBets,
   onSimulateProbability,
   isRefreshing = false
-}) => {
+}: LatestOfficialDrawCardProps) => {
   const isMaisMilionaria = lottery === 'maismilionaria';
   const isLotofacil = lottery === 'lotofacil';
   const [isEditing, setIsEditing] = useState(false);
@@ -43,6 +44,9 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
   // Campos do formulário de edição manual
   const [editContest, setEditContest] = useState(latestDraw.contestNumber.toString());
   const [editDate, setEditDate] = useState(latestDraw.date);
+  const [editNextDate, setEditNextDate] = useState(
+    latestDraw.nextContestDate || computeNextOfficialDrawDate(latestDraw.date, lottery) || ''
+  );
   const [editNumbersStr, setEditNumbersStr] = useState(latestDraw.numbers.join(', '));
   const [editTrevosStr, setEditTrevosStr] = useState((latestDraw.trevos || [1, 2]).join(', '));
   const [editAccumulated, setEditAccumulated] = useState(latestDraw.accumulated ?? true);
@@ -50,6 +54,13 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
     latestDraw.estimatedNextPrize || (isLotofacil ? "R$ 1.700.000,00" : (isMaisMilionaria ? "R$ 10.000.000,00" : "R$ 38.000.000,00"))
   );
   const [editError, setEditError] = useState<string | null>(null);
+
+  const rawNextContestDate =
+    latestDraw.nextContestDate ||
+    computeNextOfficialDrawDate(latestDraw.date, lottery);
+  const formattedNextContestDate = rawNextContestDate
+    ? formatBrDateWithWeekday(rawNextContestDate)
+    : 'Em breve';
 
   // Métricas do sorteio
   const sum = latestDraw.numbers.reduce((acc, curr) => acc + curr, 0);
@@ -102,10 +113,12 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
       parsedTrevos = uniqueTrevos.sort((a, b) => a - b);
     }
 
+    const resolvedDate = editDate.trim() || new Date().toLocaleDateString('pt-BR');
     const updated: OfficialDrawResult = {
       ...latestDraw,
       contestNumber: contestNum,
-      date: editDate.trim() || new Date().toLocaleDateString('pt-BR'),
+      date: resolvedDate,
+      nextContestDate: editNextDate.trim() || computeNextOfficialDrawDate(resolvedDate, lottery),
       numbers: uniqueNums.sort((a, b) => a - b),
       trevos: parsedTrevos,
       accumulated: editAccumulated,
@@ -171,13 +184,23 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                   {isLotofacil ? 'Lotofácil' : (isMaisMilionaria ? '+Milionária' : 'Mega-Sena')}
                 </span>
               </div>
-              <div className="flex items-center gap-2 mt-0.5">
+              <div className="flex flex-wrap items-center gap-2 mt-0.5">
                 <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
                   Concurso #{latestDraw.contestNumber}
                 </h3>
                 <span className="text-xs text-slate-300 flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded-md">
                   <Calendar className="w-3 h-3 text-slate-400" />
                   {latestDraw.date}
+                </span>
+                <span className={`text-xs font-bold flex items-center gap-1 px-2.5 py-0.5 rounded-md border ${
+                  isLotofacil
+                    ? 'bg-purple-500/20 text-purple-200 border-purple-400/30'
+                    : isMaisMilionaria
+                      ? 'bg-amber-500/20 text-amber-200 border-amber-400/30'
+                      : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30'
+                }`}>
+                  <Calendar className="w-3 h-3" />
+                  Próx. sorteio #{latestDraw.contestNumber + 1}: {formattedNextContestDate}
                 </span>
               </div>
             </div>
@@ -204,6 +227,7 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
               onClick={() => {
                 setEditContest(latestDraw.contestNumber.toString());
                 setEditDate(latestDraw.date);
+                setEditNextDate(latestDraw.nextContestDate || computeNextOfficialDrawDate(latestDraw.date, lottery) || '');
                 setEditNumbersStr(latestDraw.numbers.join(', '));
                 if (latestDraw.trevos) {
                   setEditTrevosStr(latestDraw.trevos.join(', '));
@@ -286,7 +310,7 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
                 <label className="text-[11px] font-bold text-slate-300 block mb-1">
                   Nº Concurso
@@ -312,6 +336,19 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
                   placeholder="DD/MM/AAAA"
                   className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none"
                   required
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                  Data Próx. Sorteio
+                </label>
+                <input
+                  type="text"
+                  value={editNextDate}
+                  onChange={(e) => setEditNextDate(e.target.value)}
+                  placeholder="DD/MM/AAAA"
+                  className="w-full bg-slate-800 border border-slate-700 focus:border-amber-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none"
                 />
               </div>
 
@@ -489,9 +526,9 @@ export const LatestOfficialDrawCard: React.FC<LatestOfficialDrawCardProps> = ({
             </div>
 
             <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
-              <span className="text-[10px] text-slate-400 block uppercase font-bold">Data Prevista</span>
-              <span className="text-sm font-black text-slate-200 mt-0.5 block">
-                {latestDraw.nextContestDate || 'Em breve'}
+              <span className="text-[10px] text-slate-400 block uppercase font-bold">Data do Próximo Sorteio</span>
+              <span className="text-sm font-black text-emerald-300 mt-0.5 block">
+                {formattedNextContestDate}
               </span>
             </div>
           </div>

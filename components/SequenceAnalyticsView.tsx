@@ -65,7 +65,7 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
       : [5, 14, 28, 33, 42, 59];
   }, [latestDraw, isLotofacil, isMaisMilionaria]);
 
-  const officialContestNumber = latestDraw?.contestNumber || (isLotofacil ? 3350 : (isMaisMilionaria ? 401 : 3071));
+  const officialContestNumber = latestDraw?.contestNumber || (isLotofacil ? 3350 : (isMaisMilionaria ? 401 : 3087));
 
   const analytics = useMemo(() => {
     return offlineCacheManager.getOrComputeSequenceAnalytics(activeLottery, latestDraw);
@@ -527,7 +527,10 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
                 Padrões de Vizinhança &amp; Conformidade Caixa
               </span>
               <span className="text-xs text-slate-300">
-                Base Histórica: {analytics.totalContests} Concursos Oficiais
+                Base Histórica:{' '}
+                {analytics.isPartialArchive
+                  ? `${analytics.totalContests.toLocaleString('pt-BR')} últimos concursos detalhados (de ${analytics.officialTotalContests.toLocaleString('pt-BR')} oficiais)`
+                  : `${analytics.totalContests.toLocaleString('pt-BR')} Concursos Oficiais`}
               </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1 tracking-tight flex items-center gap-2">
@@ -1073,7 +1076,9 @@ export const SequenceAnalyticsView: React.FC<SequenceAnalyticsViewProps> = ({
               <span>Top 15 Duplas Vizinhas mais Frequentes</span>
             </h3>
             <p className="text-xs text-slate-500">
-              Pares consecutivos que mais saíram juntos nos {analytics.totalContests} concursos oficiais
+              {analytics.isPartialArchive
+                ? `Pares consecutivos que mais saíram juntos nos últimos ${analytics.totalContests.toLocaleString('pt-BR')} concursos detalhados (de ${analytics.officialTotalContests.toLocaleString('pt-BR')} oficiais)`
+                : `Pares consecutivos que mais saíram juntos nos ${analytics.totalContests.toLocaleString('pt-BR')} concursos oficiais`}
             </p>
           </div>
 

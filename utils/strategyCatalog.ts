@@ -16,6 +16,13 @@ export const STRATEGY_CATALOG: Record<CalculationStrategy, StrategyMetadata> = {
     badge: '🛡️ Cobertura Anti-Colisão',
     description: 'Gini 0,02 · 61,6% Terno+ · 60,1% Pares'
   },
+  hybrid_combinatorial: {
+    id: 'hybrid_combinatorial',
+    name: 'Estratégia Híbrida',
+    shortName: 'Estratégia Híbrida',
+    badge: '🧬 Estratégia Híbrida',
+    description: 'Pares + Trincas + Equilíbrio Suave (Seed)'
+  },
   balanced: {
     id: 'balanced',
     name: 'Padrão Ouro',
@@ -55,6 +62,7 @@ export const STRATEGY_CATALOG: Record<CalculationStrategy, StrategyMetadata> = {
 
 export const STRATEGY_LABELS: Record<CalculationStrategy, string> = {
   combinatorial_cover: STRATEGY_CATALOG.combinatorial_cover.name,
+  hybrid_combinatorial: STRATEGY_CATALOG.hybrid_combinatorial.name,
   balanced: STRATEGY_CATALOG.balanced.name,
   momentum: STRATEGY_CATALOG.momentum.name,
   cycle_delay: STRATEGY_CATALOG.cycle_delay.name,

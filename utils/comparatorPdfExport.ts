@@ -880,13 +880,14 @@ export function buildProspectiveAuditPdfDoc(params: ProspectiveAuditPdfParams): 
     doc.setFont('courier', 'normal');
     doc.setFontSize(6.8);
     doc.setTextColor(71, 85, 105);
-    doc.text(safePdfText(`SHA: ${entry.commitmentHash.slice(0, 18)}...`), MARGIN_X + 18, y + 8.5);
+    const seedSuffix = entry.seed !== undefined ? ` | Seed ${entry.seed}` : '';
+    doc.text(safePdfText(`SHA: ${entry.commitmentHash.slice(0, 14)}...${seedSuffix}`), MARGIN_X + 18, y + 8.5);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
     doc.text(
-      `${entry.optimizedCoverage.pairCoveragePct.toFixed(1)}%`,
+      `${entry.optimizedCoverage.pairCoveragePct.toFixed(1)}% P`,
       MARGIN_X + 92,
       y + 4.5
     );
@@ -894,7 +895,7 @@ export function buildProspectiveAuditPdfDoc(params: ProspectiveAuditPdfParams): 
     doc.setFontSize(6.8);
     doc.setTextColor(100, 116, 139);
     doc.text(
-      `Gini ${entry.optimizedCoverage.giniCoefficient.toFixed(2)}`,
+      `${entry.optimizedCoverage.uniqueTriples}T | G ${entry.optimizedCoverage.giniCoefficient.toFixed(2)}`,
       MARGIN_X + 92,
       y + 8.5
     );

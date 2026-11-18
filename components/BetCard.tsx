@@ -377,11 +377,18 @@ const BetCard: React.FC<BetCardProps> = ({
                 ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
                 : bet.advancedMetrics.strategyUsed === 'entropy_shannon'
                 ? 'bg-purple-50 text-purple-900 border-purple-300'
+                : bet.advancedMetrics.strategyUsed === 'hybrid_combinatorial'
+                ? 'bg-cyan-50 text-cyan-900 border-cyan-300'
                 : bet.advancedMetrics.strategyUsed === 'combinatorial_cover'
                 ? 'bg-teal-50 text-teal-900 border-teal-300'
                 : 'bg-emerald-50 text-emerald-900 border-emerald-300'
             }`}>
               {getStrategyMeta(bet.advancedMetrics.strategyUsed).badge}
+            </span>
+          )}
+          {bet.advancedMetrics.hybridSeed !== undefined && (
+            <span className="bg-cyan-50/70 text-cyan-800 border border-cyan-200 px-2 py-0.5 rounded-md font-mono font-bold">
+              Seed: {bet.advancedMetrics.hybridSeed}
             </span>
           )}
           {bet.advancedMetrics.duqueName && (

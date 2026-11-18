@@ -20,6 +20,12 @@ import {
   analyzePortfolioCoverage,
   PortfolioCoverageMetrics
 } from './portfolioOptimizer';
+import {
+  generateHybridCoveragePortfolio,
+  generateHybridSingleGame,
+  createExplicitRandomSeed,
+  PortfolioStructuralMetrics
+} from './hybridCoverageStrategy';
 
 export interface GameValidationDetails {
   sum: number;
@@ -555,6 +561,32 @@ export const generateGameWithRules = (
   validation: GameValidationDetails;
   advancedMetrics: AdvancedBetMetrics;
 } => {
+  if (logic.calculationStrategy === 'hybrid_combinatorial') {
+    const single = generateHybridSingleGame({
+      betSize: quantity,
+      maxNum: 60,
+      seed: logic.portfolioSeed
+    });
+    const cleanHybridLogic: GeneratorLogic = {
+      ...logic,
+      useAdvancedDuques: false,
+      paretoTopSelection: false,
+      preferHistoricalHotNumbers: false,
+      includeCycleDezenas: false,
+      repeat1to2: false
+    };
+    const validation = validateGameAgainstRules(single.numbers, cleanHybridLogic, referenceNumbers, analyticsOverride);
+    const metrics = buildAdvancedBetMetrics(validation, 'hybrid_combinatorial');
+    metrics.hybridSeed = single.seed;
+    return {
+      numbers: single.numbers,
+      reasoning: `Estratégia Híbrida (Seed ${single.seed}): soma ${validation.sum}, ${validation.evenCount}P/${validation.oddCount}I, dispersão espacial suave em quadrantes/faixas (Pontuação Híbrida: ${single.breakdown.totalScore.toFixed(1)}).`,
+      passedAllRules: true,
+      validation,
+      advancedMetrics: metrics
+    };
+  }
+
   const isCombinatorialMode = logic.calculationStrategy === 'combinatorial_cover';
   const effectiveLogic: GeneratorLogic = isCombinatorialMode
     ? {
@@ -755,9 +787,57 @@ export const generatePortfolioWithRules = (
     advancedMetrics: AdvancedBetMetrics;
   }>;
   coverage: PortfolioCoverageMetrics;
+  seedUsed?: number;
+  structuralMetrics?: PortfolioStructuralMetrics;
 } => {
   const safePortfolioSize = Math.max(1, Math.min(300, portfolioSize));
   const analytics = analyticsOverride || CACHED_ADVANCED_ANALYTICS;
+
+  if (logic.calculationStrategy === 'hybrid_combinatorial') {
+    const requestedSubPool = logic.portfolioSubPoolSize ?? 60;
+    const subPoolSize = [24, 30, 36, 42, 60].includes(requestedSubPool) ? requestedSubPool : 60;
+    const subPoolNumbers = subPoolSize < 60 ? buildBalancedSubPool(subPoolSize, analytics) : undefined;
+    const resolvedSeed = logic.portfolioSeed ?? createExplicitRandomSeed();
+
+    const hybridResult = generateHybridCoveragePortfolio({
+      portfolioSize: safePortfolioSize,
+      betSize: quantity,
+      maxNum: 60,
+      seed: resolvedSeed,
+      candidatesPerTicket: 320,
+      enablePostOptimization: Boolean(logic.hybridPostOptimization),
+      subPoolNumbers
+    });
+
+    const cleanLogic: GeneratorLogic = {
+      ...logic,
+      useAdvancedDuques: false,
+      paretoTopSelection: false,
+      preferHistoricalHotNumbers: false,
+      includeCycleDezenas: false,
+      repeat1to2: false
+    };
+
+    const games = hybridResult.games.map((numbers, idx) => {
+      const validation = validateGameAgainstRules(numbers, cleanLogic, referenceNumbers, analyticsOverride);
+      const metrics = buildAdvancedBetMetrics(validation, 'hybrid_combinatorial');
+      metrics.hybridSeed = hybridResult.seed;
+      return {
+        numbers,
+        reasoning: `Estratégia Híbrida (#${idx + 1}/${safePortfolioSize} • Seed ${hybridResult.seed}): ${hybridResult.coverage.uniquePairs} pares (${hybridResult.coverage.pairCoveragePct.toFixed(1)}%) • ${hybridResult.coverage.uniqueTriples} trincas (${hybridResult.coverage.tripleCoveragePct.toFixed(2)}%) • Soma ${validation.sum}, ${validation.evenCount}P/${validation.oddCount}I.`,
+        passedAllRules: true,
+        validation,
+        advancedMetrics: metrics
+      };
+    });
+
+    return {
+      games,
+      coverage: hybridResult.coverage,
+      seedUsed: hybridResult.seed,
+      structuralMetrics: hybridResult.structuralMetrics
+    };
+  }
 
   if (logic.calculationStrategy === 'combinatorial_cover') {
     const requestedSubPool = logic.portfolioSubPoolSize ?? 60;

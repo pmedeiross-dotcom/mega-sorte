@@ -14,7 +14,8 @@ import {
   Shapes,
   BarChart3,
   History,
-  TrendingUp
+  TrendingUp,
+  Link2
 } from 'lucide-react';
 import { 
   buildDrawsListWithLatest,
@@ -43,6 +44,7 @@ import { Bet, OfficialDrawResult, LotteryType, TernoBoostProfile } from '../type
 import { offlineCacheManager } from '../services/offlineCacheManager';
 import FrequencyChart from './FrequencyChart';
 import SumDistributionChart from './SumDistributionChart';
+import CompanionNumbersPanel from './CompanionNumbersPanel';
 
 interface AdvancedAnalyticsViewProps {
   latestDraw?: OfficialDrawResult;
@@ -101,8 +103,10 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
 
   // Sub-abas de navegação temática
   const [subTab, setSubTab] = useState<
-    'table' | 'frequency_chart' | 'sum_chart' | 'recent_contests' | 'behavior_cycle' | 'par_impar_repeat' | 'primes_fibo_mult3' | 'board_geometry' | 'duques_pareto' | 'positions_binary'
+    'table' | 'companions' | 'frequency_chart' | 'sum_chart' | 'recent_contests' | 'behavior_cycle' | 'par_impar_repeat' | 'primes_fibo_mult3' | 'board_geometry' | 'duques_pareto' | 'positions_binary'
   >('table');
+
+  const [companionNumberInput, setCompanionNumberInput] = useState('');
 
   // Filtros da Tabela Geral com useDeferredValue
   const [tableSearch, setTableSearch] = useState('');
@@ -355,6 +359,7 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
         {[
           { id: 'table', label: `Tabela Geral (${maxNum} Números)`, icon: Table },
+          { id: 'companions', label: 'Top 20 Acompanhantes', icon: Link2 },
           { id: 'frequency_chart', label: 'Gráfico de Frequência', icon: BarChart3 },
           { id: 'sum_chart', label: 'Gráfico das Somas', icon: TrendingUp },
           { id: 'recent_contests', label: 'Histórico dos Concursos', icon: History },
@@ -386,7 +391,18 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
 
       {/* 1. MÓDULO: TABELA GERAL */}
       {subTab === 'table' && (
-        <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200 shadow-sm space-y-5">
+        <div className="space-y-6">
+          <CompanionNumbersPanel
+            draws={dynamicDraws}
+            lottery={lottery}
+            maxNum={maxNum}
+            latestDraw={latestDraw}
+            numbersAnalysis={analytics?.numbersAnalysis}
+            value={companionNumberInput}
+            onChange={setCompanionNumberInput}
+          />
+
+          <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200 shadow-sm space-y-5">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <h3 className="text-base font-black text-slate-950 flex items-center space-x-2">
@@ -516,6 +532,20 @@ export const AdvancedAnalyticsView: React.FC<AdvancedAnalyticsViewProps> = ({
             })}
           </div>
         </div>
+        </div>
+      )}
+
+      {/* 1A. MÓDULO DEDICADO: TOP 20 DEZENAS QUE ACOMPANHAM O NÚMERO */}
+      {subTab === 'companions' && (
+        <CompanionNumbersPanel
+          draws={dynamicDraws}
+          lottery={lottery}
+          maxNum={maxNum}
+          latestDraw={latestDraw}
+          numbersAnalysis={analytics?.numbersAnalysis}
+          value={companionNumberInput}
+          onChange={setCompanionNumberInput}
+        />
       )}
 
       {/* 1B. MÓDULO: GRÁFICO DE FREQUÊNCIA INDIVIDUAL */}

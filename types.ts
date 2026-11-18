@@ -14,12 +14,13 @@ export interface AnalysisResult {
 }
 
 export type CalculationStrategy = 
-  | 'balanced'           // Padrão Ouro Multi-Objetivo (Pareto + Poisson/Bernoulli + Moldura)
-  | 'momentum'           // Decaimento Exponencial & Momentum Recente (últimos 50-100 concursos)
-  | 'cycle_delay'        // Pressão Estatística (Z-Score de Atraso & Fechamento de Ciclo)
-  | 'cooccurrence'       // Coocorrência & Duques de Alta Afinidade (Lift Positivo)
-  | 'entropy_shannon'    // Máxima Entropia de Shannon & Dispersão Uniforme
-  | 'combinatorial_cover'; // Otimização Combinatória Anti-Colisão de Carteira (Recomendado)
+  | 'balanced'             // Padrão Ouro Multi-Objetivo (Pareto + Poisson/Bernoulli + Moldura)
+  | 'momentum'             // Decaimento Exponencial & Momentum Recente (últimos 50-100 concursos)
+  | 'cycle_delay'          // Pressão Estatística (Z-Score de Atraso & Fechamento de Ciclo)
+  | 'cooccurrence'         // Coocorrência & Duques de Alta Afinidade (Lift Positivo)
+  | 'entropy_shannon'      // Máxima Entropia de Shannon & Dispersão Uniforme
+  | 'combinatorial_cover'  // Otimização Combinatória Anti-Colisão de Carteira (Recomendado)
+  | 'hybrid_combinatorial'; // Estratégia Híbrida de Cobertura Combinatória (Pares/Trincas + Equilíbrio Suave)
 
 export interface AdvancedBetMetrics {
   duquePair?: [number, number];
@@ -37,6 +38,7 @@ export interface AdvancedBetMetrics {
   advancedScore?: number;
   // Sugestões e Métricas Matemáticas Avançadas
   strategyUsed?: CalculationStrategy;
+  hybridSeed?: number;
   shannonEntropy?: number;
   entropyLabel?: 'Baixa' | 'Ideal' | 'Alta';
   delayZScoreMax?: number;
@@ -102,6 +104,9 @@ export interface GeneratorLogic {
   rowAndColDispersion?: boolean;
   // Estratégia de Cálculo Matemático
   calculationStrategy?: CalculationStrategy;
+  // Seed determinística opcional para reprodutibilidade da carteira (Estratégia Híbrida)
+  portfolioSeed?: number;
+  hybridPostOptimization?: boolean;
   // Tamanho do sub-pool de dezenas para carteiras concentradas (60 = Cobertura Global padrão)
   portfolioSubPoolSize?: number;
   // Filtro de Plausibilidade Histórica (Centralizar nos clusters de máxima densidade)

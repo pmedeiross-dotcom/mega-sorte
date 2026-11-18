@@ -15,7 +15,7 @@ import { TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT, MaisMilionariaDraw } from '../uti
 import { LotofacilDraw } from '../utils/lotofacilContestsData';
 import { CacheStats, OfficialDrawResult, LotteryType } from '../types';
 
-const CACHE_VERSION = 'v3_offline_hub';
+const CACHE_VERSION = 'v4_full_archive';
 const PREFIX = `ms_cache_${CACHE_VERSION}_`;
 
 const KEYS = {

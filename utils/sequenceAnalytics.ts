@@ -5,9 +5,9 @@
  * em toda a história oficial da Mega-Sena e da +Milionária.
  */
 
-import { MEGA_SENA_OFFICIAL_DRAWS } from './megaSenaContestsData';
-import { MAIS_MILIONARIA_OFFICIAL_DRAWS } from './maisMilionariaContestsData';
-import { RECENT_LOTOFACIL_DRAWS } from './lotofacilContestsData';
+import { MEGA_SENA_OFFICIAL_DRAWS, TOTAL_CONTESTS_COUNT } from './megaSenaContestsData';
+import { MAIS_MILIONARIA_OFFICIAL_DRAWS, TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT } from './maisMilionariaContestsData';
+import { RECENT_LOTOFACIL_DRAWS, TOTAL_LOTOFACIL_CONTESTS_COUNT } from './lotofacilContestsData';
 import { LotteryType, OfficialDrawResult } from '../types';
 
 export interface SequencePatternStat {
@@ -32,6 +32,8 @@ export interface ConsecutivePairRanking {
 
 export interface SequenceAnalysisResult {
   totalContests: number;
+  officialTotalContests: number;
+  isPartialArchive: boolean;
   patterns: SequencePatternStat[];
   topConsecutivePairs: ConsecutivePairRanking[];
   latestContestSequences: {
@@ -84,17 +86,35 @@ export function computeSequenceAnalytics(
     ? MAIS_MILIONARIA_OFFICIAL_DRAWS.map(d => ({ contest: d.contest, numbers: d.numbers }))
     : MEGA_SENA_OFFICIAL_DRAWS.map(d => ({ contest: d.contest, numbers: d.numbers }));
 
-  // Se o usuário passou um último concurso atualizado
-  let dynamicDraws = [...baseDraws];
-  if (latestDraw && latestDraw.numbers && latestDraw.numbers.length >= 6) {
-    if (dynamicDraws[0] && dynamicDraws[0].contest === latestDraw.contestNumber) {
-      dynamicDraws[0] = { contest: latestDraw.contestNumber, numbers: latestDraw.numbers };
-    } else {
-      dynamicDraws = [{ contest: latestDraw.contestNumber, numbers: latestDraw.numbers }, ...dynamicDraws];
+  // Se o usuário passou um último concurso atualizado, integra sem duplicar
+  const rawDraws =
+    latestDraw && latestDraw.numbers && latestDraw.numbers.length >= 6
+      ? [
+          { contest: latestDraw.contestNumber, numbers: [...latestDraw.numbers].sort((a, b) => a - b) },
+          ...baseDraws.filter(d => d.contest !== latestDraw.contestNumber)
+        ]
+      : [...baseDraws];
+
+  const seenContests = new Set<number>();
+  const dynamicDraws: Array<{ contest: number; numbers: number[] }> = [];
+  for (const d of rawDraws) {
+    if (!seenContests.has(d.contest)) {
+      seenContests.add(d.contest);
+      dynamicDraws.push(d);
     }
   }
 
   const totalContests = dynamicDraws.length;
+  const officialTotalContests = Math.max(
+    totalContests,
+    latestDraw?.contestNumber ||
+      (isLotofacil
+        ? TOTAL_LOTOFACIL_CONTESTS_COUNT
+        : isMaisMilionaria
+        ? TOTAL_MAIS_MILIONARIA_CONTESTS_COUNT
+        : TOTAL_CONTESTS_COUNT)
+  );
+  const isPartialArchive = totalContests < officialTotalContests * 0.9;
 
   // Contadores de padrões
   let count0 = 0; // Nenhuma sequência
@@ -202,7 +222,7 @@ export function computeSequenceAnalytics(
   ];
 
   const topConsecutivePairs: ConsecutivePairRanking[] = Object.values(pairOccurrences)
-    .sort((a, b) => b.count - a.count)
+    .sort((a, b) => b.count - a.count || b.lastContest - a.lastContest)
     .slice(0, 15)
     .map(p => ({
       pair: p.pair,
@@ -220,6 +240,8 @@ export function computeSequenceAnalytics(
 
   return {
     totalContests,
+    officialTotalContests,
+    isPartialArchive,
     patterns,
     topConsecutivePairs,
     latestContestSequences: {

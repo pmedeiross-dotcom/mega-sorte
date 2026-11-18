@@ -153,10 +153,10 @@ export interface PositionStats {
  * Calcula todas as análises avançadas com base nos sorteios oficiais
  */
 export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
-  const isCustomSubset = Boolean(customDraws && customDraws.length > 0 && customDraws !== RECENT_OFFICIAL_DRAWS);
   const drawsList = customDraws && customDraws.length > 0 ? customDraws : RECENT_OFFICIAL_DRAWS;
+  const isCustomSubset = Boolean(customDraws && customDraws.length > 0 && customDraws.length < RECENT_OFFICIAL_DRAWS.length);
   const latestContest = drawsList[0]?.contest || RECENT_OFFICIAL_DRAWS[0].contest;
-  const effectiveContestsCount = isCustomSubset ? drawsList.length : TOTAL_CONTESTS_COUNT;
+  const effectiveContestsCount = drawsList.length;
 
   // Mapa de atrasos atuais e contagens estritamente sobre drawsList
   const currentDelays: Record<number, number> = {};
@@ -192,13 +192,11 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
       if (index < 25) countLast25[num]++;
       if (index < 50) countLast50[num]++;
 
-      if (isCustomSubset) {
-        for (let j = i + 1; j < nums.length; j++) {
-          const a = Math.min(nums[i], nums[j]);
-          const b = Math.max(nums[i], nums[j]);
-          const pk = `${a}-${b}`;
-          subsetPairCounts.set(pk, (subsetPairCounts.get(pk) || 0) + 1);
-        }
+      for (let j = i + 1; j < nums.length; j++) {
+        const a = Math.min(nums[i], nums[j]);
+        const b = Math.max(nums[i], nums[j]);
+        const pk = `${a}-${b}`;
+        subsetPairCounts.set(pk, (subsetPairCounts.get(pk) || 0) + 1);
       }
     }
   });
@@ -222,7 +220,7 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
   // 1. Tabela Completa dos 60 Números
   const numbersAnalysis: NumberDetailedAnalysis[] = Array.from({ length: 60 }, (_, i) => {
     const num = i + 1;
-    const totalDraws = isCustomSubset ? (subsetCounts[num] || 0) : (OFFICIAL_FREQUENCY_DATA[num] || 300);
+    const totalDraws = subsetCounts[num] || (isCustomSubset ? 0 : (OFFICIAL_FREQUENCY_DATA[num] || 300));
     const frequencyPercentage = parseFloat(((totalDraws / Math.max(1, effectiveContestsCount)) * 100).toFixed(1));
     const delay = currentDelays[num];
     const isEven = num % 2 === 0;
@@ -447,32 +445,19 @@ export const computeAllMegaSenaAnalytics = (customDraws?: MegaDraw[]) => {
     { range: "> 280", count: 48, percentage: 1.5, status: "Muito Rara" }
   ];
 
-  // 10. Duques da Mega-Sena (causais quando customDraws é fornecido; globais caso contrário)
-  const topDuques: MegaDuque[] = isCustomSubset
-    ? Array.from(subsetPairCounts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
-        .map(([k, count]) => {
-          const [a, b] = k.split('-').map(Number);
-          return {
-            pair: [a, b] as [number, number],
-            name: `${a.toString().padStart(2, '0')} - ${b.toString().padStart(2, '0')}`,
-            count,
-            percentage: parseFloat(((count / Math.max(1, effectiveContestsCount)) * 100).toFixed(2))
-          };
-        })
-    : [
-        { pair: [10, 53], name: "10 - 53", count: 58, percentage: 1.89 },
-        { pair: [33, 42], name: "33 - 42", count: 55, percentage: 1.79 },
-        { pair: [5, 37], name: "05 - 37", count: 54, percentage: 1.76 },
-        { pair: [10, 34], name: "10 - 34", count: 52, percentage: 1.69 },
-        { pair: [27, 53], name: "27 - 53", count: 51, percentage: 1.66 },
-        { pair: [4, 53], name: "04 - 53", count: 50, percentage: 1.63 },
-        { pair: [23, 38], name: "23 - 38", count: 49, percentage: 1.60 },
-        { pair: [17, 30], name: "17 - 30", count: 49, percentage: 1.60 },
-        { pair: [11, 44], name: "11 - 44", count: 48, percentage: 1.56 },
-        { pair: [28, 56], name: "28 - 56", count: 47, percentage: 1.53 }
-      ];
+  // 10. Duques da Mega-Sena calculados diretamente sobre todo o histórico consolidado (ou janela causal)
+  const topDuques: MegaDuque[] = Array.from(subsetPairCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([k, count]) => {
+      const [a, b] = k.split('-').map(Number);
+      return {
+        pair: [a, b] as [number, number],
+        name: `${a.toString().padStart(2, '0')} - ${b.toString().padStart(2, '0')}`,
+        count,
+        percentage: parseFloat(((count / Math.max(1, effectiveContestsCount)) * 100).toFixed(2))
+      };
+    });
 
   // 11. Princípio de Pareto (Top 20% das dezenas = 12 números)
   const paretoTopNumbers = sortedForRank.slice(0, 12);

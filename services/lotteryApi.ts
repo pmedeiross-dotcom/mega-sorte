@@ -1,12 +1,71 @@
-import { OfficialDrawResult } from '../types';
+import { LotteryType, OfficialDrawResult } from '../types';
 import { RECENT_OFFICIAL_DRAWS } from '../utils/megaSenaContestsData';
 
 const STORAGE_LATEST_DRAW_KEY = 'mega_sorte_latest_official_draw';
+
+const WEEKDAY_NAMES_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+export const parseBrDate = (dateStr?: string): Date | null => {
+  if (!dateStr) return null;
+  const match = dateStr.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  const d = new Date(year, month - 1, day);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d;
+};
+
+export const formatBrDate = (d: Date): string => {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+};
+
+export const formatBrDateWithWeekday = (dateStr?: string): string => {
+  if (!dateStr) return '';
+  const parsed = parseBrDate(dateStr);
+  if (!parsed) return dateStr;
+  return `${formatBrDate(parsed)} (${WEEKDAY_NAMES_SHORT[parsed.getDay()]})`;
+};
+
+/**
+ * Calcula a próxima data prevista de sorteio conforme o calendário oficial da Caixa:
+ * - Mega-Sena: Terça (2), Quinta (4), Sábado (6)
+ * - +Milionária: Quarta (3), Sábado (6)
+ * - Lotofácil: Segunda (1) a Sábado (6)
+ */
+export const computeNextOfficialDrawDate = (
+  baseDateStr?: string,
+  lottery: LotteryType = 'megasena'
+): string | undefined => {
+  const base = parseBrDate(baseDateStr);
+  if (!base) return undefined;
+
+  const allowedDays =
+    lottery === 'maismilionaria'
+      ? new Set([3, 6])
+      : lottery === 'lotofacil'
+      ? new Set([1, 2, 3, 4, 5, 6])
+      : new Set([2, 4, 6]);
+
+  const candidate = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  for (let step = 1; step <= 7; step++) {
+    candidate.setDate(candidate.getDate() + 1);
+    if (allowedDays.has(candidate.getDay())) {
+      return formatBrDate(candidate);
+    }
+  }
+  return undefined;
+};
 
 // Concurso oficial mais recente de referência consolidado
 export const DEFAULT_OFFICIAL_DRAW: OfficialDrawResult = {
   contestNumber: RECENT_OFFICIAL_DRAWS[0].contest, // 3069
   date: RECENT_OFFICIAL_DRAWS[0].date, // "11/10/2026"
+  nextContestDate: computeNextOfficialDrawDate(RECENT_OFFICIAL_DRAWS[0].date, 'megasena'),
   numbers: [...RECENT_OFFICIAL_DRAWS[0].numbers], // [5, 19, 22, 44, 47, 57]
   accumulated: true,
   estimatedNextPrize: "R$ 38.000.000,00",
@@ -25,10 +84,13 @@ export const getStoredLatestOfficialDraw = (): OfficialDrawResult => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.numbers) && parsed.numbers.length === 6) {
-        return {
-          ...parsed,
-          numbers: parsed.numbers.map((n: any) => Number(n)).sort((a: number, b: number) => a - b)
-        };
+        if (typeof parsed.contestNumber === 'number' && parsed.contestNumber >= DEFAULT_OFFICIAL_DRAW.contestNumber) {
+          return {
+            ...parsed,
+            nextContestDate: parsed.nextContestDate || computeNextOfficialDrawDate(parsed.date, parsed.lottery || 'megasena'),
+            numbers: parsed.numbers.map((n: any) => Number(n)).sort((a: number, b: number) => a - b)
+          };
+        }
       }
     }
   } catch (err) {
@@ -44,6 +106,7 @@ export const saveStoredLatestOfficialDraw = (draw: OfficialDrawResult): void => 
   try {
     const cleanDraw: OfficialDrawResult = {
       ...draw,
+      nextContestDate: draw.nextContestDate || computeNextOfficialDrawDate(draw.date, draw.lottery || 'megasena'),
       numbers: [...draw.numbers].sort((a, b) => a - b),
       lastUpdated: Date.now()
     };
@@ -83,6 +146,7 @@ export const fetchLatestOfficialDraw = async (): Promise<{ draw: OfficialDrawRes
         // Tratamento para diferentes formatos de API da Caixa / Loterias
         let contestNumber = 0;
         let dateStr = "";
+        let nextContestDate = "";
         let numbers: number[] = [];
         let accumulated = false;
         let estimatedNextPrize = "";
@@ -90,6 +154,11 @@ export const fetchLatestOfficialDraw = async (): Promise<{ draw: OfficialDrawRes
         if (data.numero || data.concurso) {
           contestNumber = Number(data.numero || data.concurso);
           dateStr = data.dataApuracao || data.data || new Date().toLocaleDateString('pt-BR');
+          nextContestDate =
+            data.dataProximoConcurso ||
+            data.data_proximo_concurso ||
+            data.proximoConcursoData ||
+            "";
           
           const rawDezenas = data.listaDezenas || data.dezenas || data.resultado || [];
           numbers = rawDezenas.map((d: any) => Number(d)).filter((n: number) => !isNaN(n) && n >= 1 && n <= 60);
@@ -102,9 +171,14 @@ export const fetchLatestOfficialDraw = async (): Promise<{ draw: OfficialDrawRes
         }
 
         if (contestNumber > 0 && numbers.length === 6) {
+          const resolvedNextDate =
+            (typeof nextContestDate === 'string' && nextContestDate.trim()) ||
+            computeNextOfficialDrawDate(dateStr, 'megasena');
+
           const liveDraw: OfficialDrawResult = {
             contestNumber,
             date: dateStr,
+            nextContestDate: resolvedNextDate,
             numbers: numbers.sort((a, b) => a - b),
             accumulated,
             estimatedNextPrize: estimatedNextPrize || (accumulated ? "Acumulado para o próximo sorteio" : undefined),
